@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { Cloud, LayoutDashboard, Plus, Server as ServerIcon, Settings as SettingsIcon, ShieldCheck } from 'lucide-react'
+import { Cloud, Info, LayoutDashboard, Plus, Server as ServerIcon, Settings as SettingsIcon, ShieldCheck } from 'lucide-react'
 import { api } from './api'
 import type { AppState, ServerStatus } from './types'
 import { UIProvider, usePoll } from './components/ui'
@@ -9,8 +9,9 @@ import ServerPage from './pages/Server'
 import Clouds from './pages/Clouds'
 import SettingsPage from './pages/Settings'
 import ServerForm from './pages/ServerForm'
+import About from './pages/About'
 
-export type Route = { page: 'overview' } | { page: 'clouds' } | { page: 'settings' } | { page: 'server'; id: string }
+export type Route = { page: 'overview' } | { page: 'clouds' } | { page: 'settings' } | { page: 'about' } | { page: 'server'; id: string }
 
 interface AppCtx {
   state: AppState
@@ -102,6 +103,9 @@ export default function App() {
             })}
             {state.servers.length === 0 && <div className="faint small" style={{ padding: '4px 10px' }}>Пока нет серверов</div>}
             <div className="sidebar-foot">
+              <button className={cls('nav-item', route.page === 'about' && 'active')} style={{ marginBottom: 8 }} onClick={() => setRoute({ page: 'about' })}>
+                <Info size={17} /><span className="grow">О программе</span>
+              </button>
               <button className="btn" style={{ width: '100%' }} onClick={() => setAdding(true)}><Plus size={16} /> Добавить сервер</button>
             </div>
           </aside>
@@ -109,6 +113,7 @@ export default function App() {
             {route.page === 'overview' && <Overview />}
             {route.page === 'clouds' && <Clouds />}
             {route.page === 'settings' && <SettingsPage />}
+            {route.page === 'about' && <About />}
             {route.page === 'server' && state.servers.some(s => s.id === route.id) && <ServerPage key={route.id} id={route.id} />}
           </main>
         </div>
