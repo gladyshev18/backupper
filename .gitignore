@@ -1,0 +1,5 @@
+build/bin
+frontend/dist
+frontend/node_modules
+agentbin/dist/backupper-agent-*
+.claude/

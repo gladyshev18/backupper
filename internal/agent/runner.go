@@ -1,0 +1,560 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"filippo.io/age"
+	"github.com/klauspost/compress/gzip"
+
+	"backupper/internal/chunk"
+	"backupper/internal/model"
+	"backupper/internal/storage"
+)
+
+const runDirLayout = "2006-01-02_15-04-05"
+
+func (a *Agent) logf(r *model.Run, level, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	a.state.WithRun(r, func(r *model.Run) {
+		r.Log = append(r.Log, model.LogLine{Time: time.Now(), Level: level, Msg: msg})
+		if len(r.Log) > 400 {
+			r.Log = append(r.Log[:50], r.Log[len(r.Log)-300:]...)
+		}
+	})
+}
+
+func (a *Agent) serverName() string {
+	c := a.state.Config()
+	if c.Settings.ServerName != "" {
+		return c.Settings.ServerName
+	}
+	h, _ := os.Hostname()
+	return h
+}
+
+// JobDir is the job's folder relative to the storage root.
+func (a *Agent) jobDir(job model.Job) string {
+	return path.Join(Slug(a.serverName()), Slug(job.Name))
+}
+
+func (a *Agent) openDests(job model.Job, runDir string) ([]dest, error) {
+	if len(job.Storages) == 0 {
+		return nil, errors.New("не выбрано ни одного облака")
+	}
+	var out []dest
+	for _, id := range job.Storages {
+		sc, ok := a.state.Storage(id)
+		if !ok {
+			return nil, fmt.Errorf("облако %s не найдено в настройках агента — откройте сервер в панели, чтобы синхронизировать", id)
+		}
+		st, err := storage.New(sc)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", sc.Name, err)
+		}
+		out = append(out, dest{id: id, st: st, dir: storage.Clean(path.Join(sc.Root, runDir))})
+	}
+	return out, nil
+}
+
+// PlanFor computes the chunk plan for a job with the current server state.
+func (a *Agent) PlanFor(job model.Job) model.ChunkPlan {
+	si := CollectSysInfo()
+	var speeds []float64
+	var maxFile int64
+	for _, id := range job.Storages {
+		st := a.state.Stats(id)
+		speeds = append(speeds, st.SpeedBps)
+		mf := st.MaxFile
+		if sc, ok := a.state.Storage(id); ok && mf == 0 {
+			mf = storage.KnownMaxFile(sc.Kind)
+		}
+		if mf > 0 && (maxFile == 0 || mf < maxFile) {
+			maxFile = mf
+		}
+	}
+	return chunk.Plan(chunk.Input{
+		Settings:     job.Chunk,
+		MemAvailable: si.MemAvailable,
+		DiskFree:     si.DiskFree,
+		SpeedBps:     chunk.CombinedSpeed(speeds),
+		ExpectedSize: a.state.ExpectedSize(job.ID),
+		MaxFileSize:  maxFile,
+	})
+}
+
+type countReader struct {
+	r  io.Reader
+	fn func(n int)
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if n > 0 {
+		c.fn(n)
+	}
+	return n, err
+}
+
+type tailBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > 4096 {
+		t.buf = t.buf[len(t.buf)-4096:]
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(string(t.buf))
+}
+
+// execute performs one run of a job.
+func (a *Agent) execute(ctx context.Context, run *model.Run, job model.Job) {
+	cfg := a.state.Config()
+	a.state.WithRun(run, func(r *model.Run) {
+		r.Status = model.RunRunning
+		r.StartedAt = time.Now()
+		r.Progress = &model.Progress{Stage: "Подготовка"}
+	})
+	a.logf(run, "info", "Запуск задачи «%s» (%s)", job.Name, run.Trigger)
+
+	status, errMsg := a.doRun(ctx, run, job, cfg)
+
+	a.state.WithRun(run, func(r *model.Run) {
+		r.Status = status
+		r.Error = errMsg
+		r.FinishedAt = time.Now()
+		r.Progress = nil
+	})
+	dur := ruDuration(run.FinishedAt.Sub(run.StartedAt))
+	switch status {
+	case model.RunSuccess:
+		a.logf(run, "info", "Готово за %s, загружено %s", dur, chunk.HumanBytes(run.Bytes))
+	case model.RunWarning:
+		a.logf(run, "warn", "Завершено с предупреждениями за %s", dur)
+	default:
+		a.logf(run, "error", "Ошибка: %s", errMsg)
+	}
+	a.state.SaveHistory()
+	a.notify(job, run)
+}
+
+func ruDuration(d time.Duration) string {
+	s := int(d.Round(time.Second).Seconds())
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%d с", s)
+	case s < 3600:
+		return fmt.Sprintf("%d мин %d с", s/60, s%60)
+	}
+	return fmt.Sprintf("%d ч %d мин", s/3600, s%3600/60)
+}
+
+func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Config) (string, string) {
+	if job.Encrypt && cfg.Settings.EncryptionPassword == "" {
+		return model.RunFailed, "включено шифрование, но пароль шифрования не задан в настройках панели"
+	}
+	if len(job.Sources) == 0 {
+		return model.RunFailed, "в задаче нет источников"
+	}
+	started := time.Now()
+	runDir := path.Join(a.jobDir(job), started.Format(runDirLayout))
+	dests, err := a.openDests(job, runDir)
+	if err != nil {
+		return model.RunFailed, err.Error()
+	}
+	plan := a.PlanFor(job)
+	a.state.WithRun(run, func(r *model.Run) {
+		r.RemoteDir = runDir
+		r.Storages = job.Storages
+		r.ChunkSize = plan.Size
+		r.ChunkBuffer = plan.Buffer
+		r.Uploads = map[string]model.UploadStat{}
+	})
+	a.logf(run, "info", "Размер куска: %s, буфер: %s, пик памяти ~%s", chunk.HumanBytes(plan.Size), map[string]string{model.BufferMemory: "память", model.BufferDisk: "диск"}[plan.Buffer], chunk.HumanBytes(plan.PeakMemory))
+	for _, r := range plan.Reasons {
+		a.logf(run, "info", "  • %s", r)
+	}
+	for _, w := range plan.Warnings {
+		a.logf(run, "warn", "  ⚠ %s", w)
+	}
+
+	for _, d := range dests {
+		mctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		err := d.st.MkdirAll(mctx, d.dir)
+		cancel()
+		if err != nil {
+			return model.RunFailed, fmt.Sprintf("облако %s: %v", d.id, err)
+		}
+	}
+
+	var recipient age.Recipient
+	if job.Encrypt {
+		rc, err := age.NewScryptRecipient(cfg.Settings.EncryptionPassword)
+		if err != nil {
+			return model.RunFailed, err.Error()
+		}
+		rc.SetWorkFactor(16)
+		recipient = rc
+	}
+
+	level := job.Compression
+	if level < 1 || level > 9 {
+		level = 6
+	}
+
+	warnings, failures := 0, 0
+	usedNames := map[string]int{}
+	for _, src := range job.Sources {
+		if ctx.Err() != nil {
+			break
+		}
+		streams, err := planStreams(ctx, src, func(lvl, f string, args ...any) {
+			if lvl == "warn" {
+				warnings++
+			}
+			a.logf(run, lvl, f, args...)
+		})
+		if err != nil {
+			failures++
+			a.logf(run, "error", "%s: %v", defaultName(src), err)
+			a.state.WithRun(run, func(r *model.Run) {
+				r.Files = append(r.Files, model.RunFile{Name: Slug(defaultName(src)), Source: defaultName(src), Error: err.Error()})
+			})
+			continue
+		}
+		for _, s := range streams {
+			if ctx.Err() != nil {
+				break
+			}
+			name := s.file + ".gz"
+			if job.Encrypt {
+				name += ".age"
+			}
+			if n := usedNames[name]; n > 0 {
+				name = strings.Replace(name, ".", fmt.Sprintf("_%d.", n+1), 1)
+			}
+			usedNames[name]++
+			rf, warn := a.runStream(ctx, run, s, name, dests, plan, level, recipient)
+			rf.Source = defaultName(src)
+			rf.Encrypted = job.Encrypt
+			if rf.Error != "" {
+				failures++
+			} else if warn {
+				warnings++
+			}
+			a.state.WithRun(run, func(r *model.Run) {
+				r.Files = append(r.Files, rf)
+				r.Bytes += rf.Size
+				r.RawBytes += rf.RawSize
+			})
+		}
+	}
+
+	if ctx.Err() != nil {
+		a.cleanupDir(dests)
+		return model.RunCanceled, "отменено"
+	}
+
+	status := model.RunSuccess
+	switch {
+	case failures > 0:
+		status = model.RunFailed
+	case warnings > 0:
+		status = model.RunWarning
+	}
+
+	// Manifest lets the panel list and restore backups straight from the cloud.
+	snap := a.state.Run(run.ID)
+	man := model.Manifest{Version: 1, Server: a.serverName(), JobID: job.ID, JobName: job.Name, Status: status, StartedAt: started, Finished: time.Now(), Files: snap.Files}
+	mb, _ := json.MarshalIndent(man, "", "  ")
+	for _, d := range dests {
+		mctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		err := d.st.Put(mctx, path.Join(d.dir, "manifest.json"), bytes.NewReader(mb), int64(len(mb)))
+		cancel()
+		if err != nil {
+			a.logf(run, "error", "manifest.json → %s: %v", d.id, err)
+			status = model.RunFailed
+		}
+	}
+
+	// Remember upload speed per destination for the next chunk plan.
+	snap = a.state.Run(run.ID)
+	for id, u := range snap.Uploads {
+		if u.Seconds > 1 && u.Bytes > 4*chunk.MB {
+			a.state.RecordSpeed(id, float64(u.Bytes)/u.Seconds, 0)
+			a.logf(run, "info", "Скорость загрузки в %s: %s/с", a.storageName(id), chunk.HumanBytes(int64(float64(u.Bytes)/u.Seconds)))
+		}
+	}
+
+	if status != model.RunFailed && job.Keep > 0 {
+		for _, d := range dests {
+			a.rotate(ctx, run, d, job.Keep)
+		}
+	}
+
+	if status == model.RunFailed {
+		var errs []string
+		for _, f := range snap.Files {
+			if f.Error != "" {
+				errs = append(errs, f.Source+": "+f.Error)
+			}
+		}
+		if len(errs) == 0 {
+			errs = append(errs, "не удалось записать manifest.json")
+		}
+		return status, strings.Join(errs, "; ")
+	}
+	return status, ""
+}
+
+func (a *Agent) storageName(id string) string {
+	if s, ok := a.state.Storage(id); ok {
+		return s.Name
+	}
+	return id
+}
+
+func (a *Agent) cleanupDir(dests []dest) {
+	for _, d := range dests {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		_ = d.st.Delete(ctx, d.dir)
+		cancel()
+	}
+}
+
+// runStream runs one dump command and streams it compressed (and encrypted) to the clouds.
+func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name string, dests []dest, plan model.ChunkPlan, level int, recipient age.Recipient) (model.RunFile, bool) {
+	rf := model.RunFile{Name: name}
+	a.logf(run, "info", "%s → %s", s.label, name)
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+
+	cmd, cleanup, err := s.build(ctx)
+	if err != nil {
+		rf.Error = err.Error()
+		a.logf(run, "error", "%s: %v", s.label, err)
+		return rf, false
+	}
+	defer cleanup()
+	stderr := &tailBuffer{}
+	cmd.Stderr = stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		rf.Error = err.Error()
+		return rf, false
+	}
+
+	var mu sync.Mutex
+	lastT, lastB := time.Now(), int64(0)
+	up := newUploader(ctx, dests, name, plan, func(l, f string, args ...any) { a.logf(run, l, f, args...) })
+	up.onUp = func(id string, n int64, d time.Duration) {
+		a.state.WithRun(run, func(r *model.Run) {
+			st := r.Uploads[id]
+			st.Bytes += n
+			st.Seconds += d.Seconds()
+			r.Uploads[id] = st
+			if r.Progress != nil {
+				r.Progress.Bytes += n / int64(len(dests))
+				if d > 0 {
+					r.Progress.SpeedBps = float64(n) / d.Seconds()
+				}
+			}
+		})
+	}
+	up.onPart = func(p int) {
+		a.state.WithRun(run, func(r *model.Run) {
+			if r.Progress != nil {
+				r.Progress.Part = p
+				r.Progress.Stage = "Выгрузка"
+			}
+		})
+	}
+
+	var out io.Writer = up
+	var enc io.WriteCloser
+	if recipient != nil {
+		enc, err = age.Encrypt(up, recipient)
+		if err != nil {
+			up.Abort(err)
+			rf.Error = err.Error()
+			return rf, false
+		}
+		out = enc
+	}
+	gz, _ := gzip.NewWriterLevel(out, level)
+
+	a.state.WithRun(run, func(r *model.Run) {
+		r.Progress = &model.Progress{Stage: "Дамп", Source: s.label}
+	})
+	if err := cmd.Start(); err != nil {
+		up.Abort(err)
+		rf.Error = fmt.Sprintf("не удалось запустить %s: %v", cmd.Args[0], err)
+		if errors.Is(err, exec.ErrNotFound) {
+			rf.Error = fmt.Sprintf("на сервере не установлен %s", cmd.Args[0])
+		}
+		a.logf(run, "error", "%s", rf.Error)
+		return rf, false
+	}
+
+	counter := &countReader{r: stdout, fn: func(n int) {
+		mu.Lock()
+		lastB += int64(n)
+		cur := lastB
+		mu.Unlock()
+		if time.Since(lastT) > 500*time.Millisecond {
+			lastT = time.Now()
+			a.state.WithRun(run, func(r *model.Run) {
+				if r.Progress != nil {
+					r.Progress.RawBytes = cur
+				}
+			})
+		}
+	}}
+	raw, copyErr := io.Copy(gz, counter)
+	if copyErr == nil {
+		copyErr = gz.Close()
+	}
+	if copyErr == nil && enc != nil {
+		copyErr = enc.Close()
+	}
+	if copyErr != nil {
+		cancel() // stop the dump: nobody reads its output anymore
+	}
+	waitErr := cmd.Wait()
+	rf.RawSize = raw
+
+	if copyErr != nil {
+		up.Abort(copyErr)
+		rf.Error = copyErr.Error()
+		if upErr := up.failed(); upErr != nil {
+			rf.Error = upErr.Error()
+		}
+		a.logf(run, "error", "%s: %s", name, rf.Error)
+		return rf, false
+	}
+	warn := false
+	if waitErr != nil {
+		code := -1
+		var ee *exec.ExitError
+		if errors.As(waitErr, &ee) {
+			code = ee.ExitCode()
+		}
+		if s.warnExit[code] {
+			warn = true
+			a.logf(run, "warn", "%s завершился с предупреждением (код %d): %s", cmd.Args[0], code, stderr.String())
+		} else {
+			up.Abort(waitErr)
+			msg := stderr.String()
+			if msg == "" {
+				msg = waitErr.Error()
+			}
+			rf.Error = fmt.Sprintf("%s: %s", cmd.Args[0], msg)
+			a.logf(run, "error", "%s", rf.Error)
+			return rf, false
+		}
+	} else if e := stderr.String(); e != "" {
+		a.logf(run, "info", "%s: %s", cmd.Args[0], e)
+	}
+
+	a.state.WithRun(run, func(r *model.Run) {
+		if r.Progress != nil {
+			r.Progress.Stage = "Завершение выгрузки"
+		}
+	})
+	parts, sum, err := up.Finish()
+	if err != nil {
+		rf.Error = err.Error()
+		a.logf(run, "error", "%s: %v", name, err)
+		return rf, false
+	}
+	rf.Parts = parts
+	rf.SHA256 = sum
+	for _, p := range parts {
+		rf.Size += p.Size
+	}
+	a.logf(run, "info", "%s: %s → %s, частей: %d", name, chunk.HumanBytes(raw), chunk.HumanBytes(rf.Size), len(parts))
+	return rf, warn
+}
+
+// rotate keeps the newest `keep` complete backups and removes older or broken ones.
+func (a *Agent) rotate(ctx context.Context, run *model.Run, d dest, keep int) {
+	jobDir := path.Dir(d.dir)
+	current := path.Base(d.dir)
+	lctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	entries, err := d.st.List(lctx, jobDir)
+	cancel()
+	if err != nil {
+		a.logf(run, "warn", "ротация в %s: %v", a.storageName(d.id), err)
+		return
+	}
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir {
+			if _, err := time.Parse(runDirLayout, e.Name); err == nil {
+				dirs = append(dirs, e.Name)
+			}
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
+	good := 0
+	removed := 0
+	for _, name := range dirs {
+		ok := name == current
+		if !ok {
+			man, err := readManifest(ctx, d.st, path.Join(jobDir, name))
+			ok = err == nil && (man.Status == model.RunSuccess || man.Status == model.RunWarning)
+		}
+		// Broken runs newer than the current one cannot exist; older broken ones go.
+		if ok {
+			good++
+			if good <= keep {
+				continue
+			}
+		}
+		dctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		err := d.st.Delete(dctx, path.Join(jobDir, name))
+		cancel()
+		if err != nil {
+			a.logf(run, "warn", "не удалось удалить старую копию %s: %v", name, err)
+			continue
+		}
+		removed++
+	}
+	if removed > 0 {
+		a.logf(run, "info", "Ротация %s: удалено старых копий: %d, осталось: %d", a.storageName(d.id), removed, min(good, keep))
+	}
+}
+
+func readManifest(ctx context.Context, st storage.Storage, dir string) (model.Manifest, error) {
+	var m model.Manifest
+	gctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	rc, err := st.Get(gctx, path.Join(dir, "manifest.json"))
+	if err != nil {
+		return m, err
+	}
+	defer rc.Close()
+	err = json.NewDecoder(io.LimitReader(rc, 8<<20)).Decode(&m)
+	return m, err
+}
