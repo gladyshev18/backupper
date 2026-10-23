@@ -2,6 +2,7 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, u
 import { AlertTriangle, CheckCircle2, Info, Loader2, X, XCircle } from 'lucide-react'
 import { cls, statusLabels } from '../util'
 import { errText } from '../api'
+import { t } from '../i18n'
 
 export function Button({ children, variant, size, icon, loading, className, ...p }: {
   variant?: 'primary' | 'danger' | 'ghost'; size?: 'sm'; icon?: ReactNode; loading?: boolean
@@ -69,7 +70,7 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <span className={cls('badge', tone)}>
       {status === 'running' && <Loader2 size={12} className="spin" />}
-      {statusLabels[status] || status}
+      {statusLabels[status] ? t(statusLabels[status]) : status}
     </span>
   )
 }
@@ -133,7 +134,7 @@ export function UIProvider({ children }: { children: ReactNode }) {
     setToasts(t => [...t, { id, tone, text }])
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), tone === 'error' ? 8000 : 4000)
   }, [])
-  const confirm = useCallback((text: ReactNode, ok = 'Подтвердить', danger = false) =>
+  const confirm = useCallback((text: ReactNode, ok = t('Подтвердить'), danger = false) =>
     new Promise<boolean>(resolve => setConf({ text, ok, danger, resolve })), [])
   const close = (v: boolean) => { conf?.resolve(v); setConf(null) }
   return (
@@ -148,8 +149,8 @@ export function UIProvider({ children }: { children: ReactNode }) {
         ))}
       </div>
       {conf && (
-        <Modal title="Подтверждение" onClose={() => close(false)} footer={<>
-          <Button onClick={() => close(false)}>Отмена</Button>
+        <Modal title={t('Подтверждение')} onClose={() => close(false)} footer={<>
+          <Button onClick={() => close(false)}>{t('Отмена')}</Button>
           <Button variant={conf.danger ? 'danger' : 'primary'} onClick={() => close(true)} autoFocus>{conf.ok}</Button>
         </>}>
           <div className="muted">{conf.text}</div>

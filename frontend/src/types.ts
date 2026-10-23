@@ -1,6 +1,6 @@
 export interface Source {
   id: string
-  type: 'mysql' | 'postgres' | 'files' | 'configs'
+  type: 'mysql' | 'postgres' | 'files' | 'configs' | 'site'
   name: string
   host?: string
   port?: number
@@ -11,6 +11,32 @@ export interface Source {
   extraArgs?: string
   paths?: string[]
   excludes?: string[]
+  site?: SiteSource
+}
+
+export interface SiteSource {
+  protocol: 'ftp' | 'ftps' | 'sftp'
+  host: string
+  port?: number
+  user: string
+  password?: string
+  root: string
+  url: string
+  db: boolean
+  files: boolean
+  cms: 'auto' | 'bitrix' | 'wordpress' | 'none'
+  cmsExcludes: boolean
+  dbHost?: string
+  dbName?: string
+  dbUser?: string
+  dbPassword?: string
+  insecure?: boolean
+}
+
+export interface SiteInfo {
+  php: string; sapi: string; os: string; root: string; cms: string; timeLimit: number; memoryLimit: number
+  diskFree: number; deflate: boolean; pdoMysql: boolean; top: string[]; warnings?: string[]
+  db?: { host: string; name: string; user: string; from: string; tables: number; size: number; server: string; error?: string }
 }
 
 export interface Schedule {
@@ -74,6 +100,7 @@ export interface Settings {
   telegram: Telegram
   theme: 'system' | 'light' | 'dark'
   yandexClientId: string
+  language: 'ru' | 'en' | ''
 }
 
 export interface Server {
@@ -150,4 +177,4 @@ export interface BackupEntry {
   dir: string; name: string; status: string; started: string; size: number; files: RunFile[]; complete: boolean
 }
 
-export interface ProbeResult { ok: boolean; error?: string; databases?: string[]; paths?: string[] }
+export interface ProbeResult { ok: boolean; error?: string; databases?: string[]; paths?: string[]; site?: SiteInfo }

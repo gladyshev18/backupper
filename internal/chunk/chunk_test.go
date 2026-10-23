@@ -50,3 +50,25 @@ func TestCombinedSpeed(t *testing.T) {
 		t.Fatalf("unknown speed should give 0, got %v", s)
 	}
 }
+
+func TestPlanEnglish(t *testing.T) {
+	inputs := []Input{
+		{MemAvailable: 900 << 20},
+		{MemAvailable: 150 << 20, DiskFree: 5 << 30, SpeedBps: 10 << 20},
+		{MemAvailable: 4 << 30, SpeedBps: 1 << 20, ExpectedSize: 60 << 30},
+		{MemAvailable: 64 << 30, SpeedBps: 500 << 20, MaxFileSize: 100 << 20},
+		{Settings: model.ChunkSettings{Mode: model.ChunkManual, SizeMB: 2048}, MemAvailable: 300 << 20, SpeedBps: 1 << 20, ExpectedSize: 900 << 30},
+		{Settings: model.ChunkSettings{Mode: model.ChunkManual, SizeMB: 1024, Buffer: model.BufferDisk}, DiskFree: 1 << 30},
+	}
+	for _, in := range inputs {
+		in.Lang = "en"
+		p := Plan(in)
+		for _, m := range append(p.Reasons, p.Warnings...) {
+			for _, r := range m {
+				if r >= 'А' && r <= 'я' {
+					t.Fatalf("untranslated: %s", m)
+				}
+			}
+		}
+	}
+}

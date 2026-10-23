@@ -275,9 +275,9 @@ func (a *App) Run(serverID, runID string) (*model.Run, error) {
 	return &run, err
 }
 
-func (a *App) Plan(serverID string, job model.Job) (model.ChunkPlan, error) {
+func (a *App) Plan(serverID string, job model.Job, lang string) (model.ChunkPlan, error) {
 	var p model.ChunkPlan
-	err := a.mgr.Call(serverID, http.MethodPost, "/api/plan", job, &p, 0)
+	err := a.mgr.Call(serverID, http.MethodPost, "/api/plan?lang="+url.QueryEscape(lang), job, &p, 0)
 	return p, err
 }
 

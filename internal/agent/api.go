@@ -203,7 +203,7 @@ func (a *Agent) hPlan(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, err)
 		return
 	}
-	writeJSONResp(w, a.PlanFor(j))
+	writeJSONResp(w, a.PlanFor(j, r.URL.Query().Get("lang")))
 }
 
 func (a *Agent) hRuns(w http.ResponseWriter, r *http.Request) {
@@ -420,9 +420,9 @@ func (a *Agent) hProbe(w http.ResponseWriter, r *http.Request) {
 		httpErr(w, 400, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
-	writeJSONResp(w, Probe(ctx, src))
+	writeJSONResp(w, a.probe(ctx, src))
 }
 
 func (a *Agent) hTelegram(w http.ResponseWriter, r *http.Request) {

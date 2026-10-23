@@ -4,6 +4,7 @@ import { api } from './api'
 import type { AppState, ServerStatus } from './types'
 import { UIProvider, usePoll } from './components/ui'
 import { cls } from './util'
+import { defaultLang, setLang, t } from './i18n'
 import Overview from './pages/Overview'
 import ServerPage from './pages/Server'
 import Clouds from './pages/Clouds'
@@ -57,6 +58,8 @@ export default function App() {
   usePoll(() => { if (state?.servers.length) refreshAll() }, 30000, [state?.servers.length])
 
   if (!state) return null
+  // Set before rendering so every t() below uses the chosen language.
+  setLang(state.settings.language || defaultLang())
 
   const ctx: AppCtx = { state, reload, statuses, setStatus, refreshAll, go: setRoute, addServer: () => setAdding(true) }
 
@@ -69,23 +72,23 @@ export default function App() {
               <div className="brand-logo"><ShieldCheck size={19} /></div>
               <div>
                 <div className="brand-name">Backupper</div>
-                <div className="brand-ver">версия {state.version}</div>
+                <div className="brand-ver">{t('версия {v}', { v: state.version })}</div>
               </div>
             </div>
             <button className={cls('nav-item', route.page === 'overview' && 'active')} onClick={() => setRoute({ page: 'overview' })}>
-              <LayoutDashboard size={17} /><span className="grow">Обзор</span>
+              <LayoutDashboard size={17} /><span className="grow">{t('Обзор')}</span>
             </button>
             <button className={cls('nav-item', route.page === 'clouds' && 'active')} onClick={() => setRoute({ page: 'clouds' })}>
-              <Cloud size={17} /><span className="grow">Облака</span>
+              <Cloud size={17} /><span className="grow">{t('Облака')}</span>
               <span className="faint small">{state.storages.length || ''}</span>
             </button>
             <button className={cls('nav-item', route.page === 'settings' && 'active')} onClick={() => setRoute({ page: 'settings' })}>
-              <SettingsIcon size={17} /><span className="grow">Настройки</span>
+              <SettingsIcon size={17} /><span className="grow">{t('Настройки')}</span>
             </button>
 
             <div className="nav-section">
-              Серверы
-              <button className="btn ghost sm icon" title="Добавить сервер" onClick={() => setAdding(true)}><Plus size={15} /></button>
+              {t('Серверы')}
+              <button className="btn ghost sm icon" title={t('Добавить сервер')} onClick={() => setAdding(true)}><Plus size={15} /></button>
             </div>
             {state.servers.map(s => {
               const st = statuses[s.id]
@@ -101,12 +104,12 @@ export default function App() {
                 </button>
               )
             })}
-            {state.servers.length === 0 && <div className="faint small" style={{ padding: '4px 10px' }}>Пока нет серверов</div>}
+            {state.servers.length === 0 && <div className="faint small" style={{ padding: '4px 10px' }}>{t('Пока нет серверов')}</div>}
             <div className="sidebar-foot">
               <button className={cls('nav-item', route.page === 'about' && 'active')} style={{ marginBottom: 8 }} onClick={() => setRoute({ page: 'about' })}>
-                <Info size={17} /><span className="grow">О программе</span>
+                <Info size={17} /><span className="grow">{t('О программе')}</span>
               </button>
-              <button className="btn" style={{ width: '100%' }} onClick={() => setAdding(true)}><Plus size={16} /> Добавить сервер</button>
+              <button className="btn" style={{ width: '100%' }} onClick={() => setAdding(true)}><Plus size={16} /> {t('Добавить сервер')}</button>
             </div>
           </aside>
           <main className="main">

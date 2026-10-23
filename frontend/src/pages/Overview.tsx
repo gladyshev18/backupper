@@ -6,6 +6,7 @@ import type { Run } from '../types'
 import { Bar, Button, Empty, StatusBadge, usePoll, useUI } from '../components/ui'
 import RunProgress from '../components/RunProgress'
 import { bytes, dateTime, duration, relative } from '../util'
+import { t } from '../i18n'
 
 export default function Overview() {
   const { state, statuses, refreshAll, go, addServer } = useApp()
@@ -18,17 +19,17 @@ export default function Overview() {
     return (
       <div className="page">
         <div className="card" style={{ marginTop: 40 }}>
-          <Empty icon={<ShieldIcon />} title="Добро пожаловать в Backupper" action={<div className="row" style={{ justifyContent: 'center' }}>
-            {!state.storages.length && <Button icon={<Cloud size={16} />} onClick={() => go({ page: 'clouds' })}>Подключить облако</Button>}
-            <Button variant="primary" icon={<ServerIcon size={16} />} onClick={addServer}>Добавить сервер</Button>
+          <Empty icon={<ShieldIcon />} title={t('Добро пожаловать в Backupper')} action={<div className="row" style={{ justifyContent: 'center' }}>
+            {!state.storages.length && <Button icon={<Cloud size={16} />} onClick={() => go({ page: 'clouds' })}>{t('Подключить облако')}</Button>}
+            <Button variant="primary" icon={<ServerIcon size={16} />} onClick={addServer}>{t('Добавить сервер')}</Button>
           </div>}>
             <div style={{ maxWidth: 520, margin: '8px auto 0', textAlign: 'left' }}>
-              <p className="muted">Бэкапы выполняет агент на самом сервере — по расписанию и без участия этого компьютера. Архив сразу уходит в облако кусками, не занимая место на диске сервера.</p>
+              <p className="muted">{t('Бэкапы выполняет агент на самом сервере — по расписанию и без участия этого компьютера. Архив сразу уходит в облако кусками, не занимая место на диске сервера.')}</p>
               <ol className="steps mt16">
-                <li>Подключите Яндекс Диск или Облако Mail.ru</li>
-                <li>Добавьте сервер — доступ по вашему SSH-ключу</li>
-                <li>Установите агент одной кнопкой</li>
-                <li>Создайте задачу: базы, файлы сайта, конфиги и расписание</li>
+                <li>{t('Подключите Яндекс Диск или Облако Mail.ru')}</li>
+                <li>{t('Добавьте сервер — доступ по вашему SSH-ключу')}</li>
+                <li>{t('Установите агент одной кнопкой')}</li>
+                <li>{t('Создайте задачу: базы, файлы сайта, конфиги и расписание')}</li>
               </ol>
             </div>
           </Empty>
@@ -54,24 +55,24 @@ export default function Overview() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Обзор</h1>
-          <div className="desc">Состояние серверов и последних бэкапов</div>
+          <h1>{t('Обзор')}</h1>
+          <div className="desc">{t('Состояние серверов и последних бэкапов')}</div>
         </div>
         <div className="actions">
-          <Button icon={<RefreshCw size={15} className={busy === 'r' ? 'spin' : ''} />} onClick={() => run('r', refreshAll)}>Обновить</Button>
+          <Button icon={<RefreshCw size={15} className={busy === 'r' ? 'spin' : ''} />} onClick={() => run('r', refreshAll)}>{t('Обновить')}</Button>
         </div>
       </div>
 
       <div className="grid g4">
-        <div className="card stat"><div className="label"><Wifi size={14} /> Серверы на связи</div><div className="value">{first && !Object.keys(statuses).length ? '…' : `${online} / ${state.servers.length}`}</div><div className="foot">агенты отвечают</div></div>
-        <div className="card stat"><div className="label"><ListChecks size={14} /> Задач</div><div className="value">{jobs}</div><div className="foot">на всех серверах</div></div>
-        <div className="card stat"><div className="label"><CheckCircle2 size={14} /> Успешно за 7 дней</div><div className="value" style={{ color: 'var(--success)' }}>{ok}</div><div className="foot">выполненных бэкапов</div></div>
-        <div className="card stat"><div className="label"><AlertOctagon size={14} /> Ошибок за 7 дней</div><div className="value" style={{ color: failed ? 'var(--danger)' : undefined }}>{failed}</div><div className="foot">{failed ? 'проверьте историю' : 'всё в порядке'}</div></div>
+        <div className="card stat"><div className="label"><Wifi size={14} /> {t('Серверы на связи')}</div><div className="value">{first && !Object.keys(statuses).length ? '…' : `${online} / ${state.servers.length}`}</div><div className="foot">{t('агенты отвечают')}</div></div>
+        <div className="card stat"><div className="label"><ListChecks size={14} /> {t('Задач')}</div><div className="value">{jobs}</div><div className="foot">{t('на всех серверах')}</div></div>
+        <div className="card stat"><div className="label"><CheckCircle2 size={14} /> {t('Успешно за 7 дней')}</div><div className="value" style={{ color: 'var(--success)' }}>{ok}</div><div className="foot">{t('выполненных бэкапов')}</div></div>
+        <div className="card stat"><div className="label"><AlertOctagon size={14} /> {t('Ошибок за 7 дней')}</div><div className="value" style={{ color: failed ? 'var(--danger)' : undefined }}>{failed}</div><div className="foot">{failed ? t('проверьте историю') : t('всё в порядке')}</div></div>
       </div>
 
       {active.length > 0 && (
         <>
-          <div className="section-title">Сейчас выполняется</div>
+          <div className="section-title">{t('Сейчас выполняется')}</div>
           <div className="col">
             {active.map(({ r, x }) => (
               <RunProgress key={r.id} run={r} server={x.s.name}
@@ -82,7 +83,7 @@ export default function Overview() {
         </>
       )}
 
-      <div className="section-title">Серверы</div>
+      <div className="section-title">{t('Серверы')}</div>
       <div className="grid g3">
         {list.map(({ s, st }) => {
           const sys = st?.info?.sys
@@ -102,17 +103,17 @@ export default function Overview() {
                 <div className="col mt12" style={{ gap: 8 }}>
                   <div className="small muted ellipsis">{sys.os}</div>
                   <div>
-                    <div className="row small"><HardDrive size={13} className="faint" /><span className="grow muted">Свободно RAM</span><b>{bytes(sys.memAvailable)}</b><span className="faint">из {bytes(sys.memTotal)}</span></div>
+                    <div className="row small"><HardDrive size={13} className="faint" /><span className="grow muted">{t('Свободно RAM')}</span><b>{bytes(sys.memAvailable)}</b><span className="faint">{t('из {total}', { total: bytes(sys.memTotal) })}</span></div>
                     <div className="mt8"><Bar value={1 - sys.memAvailable / sys.memTotal} warn={sys.memAvailable / sys.memTotal < 0.15} /></div>
                   </div>
                   <div className="row small muted">
-                    <span className="grow">Задач: <b>{st.info!.jobs.length}</b></span>
-                    <span>{next ? <>След.: <b>{relative(next)}</b></> : 'Нет расписания'}</span>
+                    <span className="grow">{t('Задач:')} <b>{st.info!.jobs.length}</b></span>
+                    <span>{next ? <>{t('След.:')} <b>{relative(next)}</b></> : t('Нет расписания')}</span>
                   </div>
                 </div>
               ) : (
                 <div className="small mt12" style={{ color: st ? 'var(--danger)' : 'var(--text-3)' }}>
-                  {!st ? 'Подключение…' : st.noAgent ? 'Агент не установлен' : st.error}
+                  {!st ? t('Подключение…') : st.noAgent ? t('Агент не установлен') : st.error}
                 </div>
               )}
             </div>
@@ -120,15 +121,15 @@ export default function Overview() {
         })}
       </div>
 
-      <div className="section-title">Последние запуски</div>
+      <div className="section-title">{t('Последние запуски')}</div>
       <div className="card">
-        {recent.length === 0 ? <div className="empty small">Запусков пока не было</div> : (
+        {recent.length === 0 ? <div className="empty small">{t('Запусков пока не было')}</div> : (
           <table className="table">
-            <thead><tr><th>Задача</th><th>Сервер</th><th>Начало</th><th>Длительность</th><th>Размер</th><th>Статус</th></tr></thead>
+            <thead><tr><th>{t('Задача')}</th><th>{t('Сервер')}</th><th>{t('Начало')}</th><th>{t('Длительность')}</th><th>{t('Размер')}</th><th>{t('Статус')}</th></tr></thead>
             <tbody>
               {recent.slice(0, 12).map(r => (
                 <tr key={r.id} className="click" onClick={() => go({ page: 'server', id: r.sid })}>
-                  <td style={{ fontWeight: 550 }}>{r.jobName}<div className="small faint">{r.trigger}</div></td>
+                  <td style={{ fontWeight: 550 }}>{r.jobName}<div className="small faint">{t(r.trigger)}</div></td>
                   <td className="muted">{r.server}</td>
                   <td className="muted">{dateTime(r.startedAt)}</td>
                   <td className="muted">{duration(r.startedAt, r.finishedAt)}</td>

@@ -3,7 +3,9 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,13 +16,75 @@ import (
 	"backupper/internal/model"
 )
 
-// stream is one dump/archive command whose stdout becomes one file in the cloud.
+// stream is one dump whose output becomes one file in the cloud: either a local
+// command (mysqldump, tar…) or a site on shared hosting (open).
 type stream struct {
 	file  string // file name without compression/encryption suffix, e.g. "shop.sql"
 	label string
 	build func(ctx context.Context) (*exec.Cmd, func(), error)
+	open  func(ctx context.Context) (*started, error)
 	// warnExit lists exit codes meaning "finished with warnings" (tar: 1).
 	warnExit map[int]bool
+}
+
+// started is a running dump.
+type started struct {
+	r             io.Reader
+	precompressed bool                 // already gzip: do not compress again
+	raw           func() int64         // uncompressed size, when r is compressed
+	wait          func() (bool, error) // after reading: (finished with warnings, error)
+	cleanup       func()
+}
+
+type nopCloser struct{ io.Writer }
+
+func (nopCloser) Close() error { return nil }
+
+func (s stream) start(ctx context.Context, logf func(level, format string, a ...any)) (*started, error) {
+	if s.open != nil {
+		return s.open(ctx)
+	}
+	cmd, cleanup, err := s.build(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stderr := &tailBuffer{}
+	cmd.Stderr = stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		cleanup()
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, fmt.Errorf("на сервере не установлен %s", cmd.Args[0])
+		}
+		return nil, fmt.Errorf("не удалось запустить %s: %v", cmd.Args[0], err)
+	}
+	return &started{r: stdout, cleanup: cleanup, wait: func() (bool, error) {
+		err := cmd.Wait()
+		if err == nil {
+			if e := stderr.String(); e != "" {
+				logf("info", "%s: %s", cmd.Args[0], e)
+			}
+			return false, nil
+		}
+		code := -1
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		}
+		if s.warnExit[code] {
+			logf("warn", "%s завершился с предупреждением (код %d): %s", cmd.Args[0], code, stderr.String())
+			return true, nil
+		}
+		msg := stderr.String()
+		if msg == "" {
+			msg = err.Error()
+		}
+		return false, fmt.Errorf("%s: %s", cmd.Args[0], msg)
+	}}, nil
 }
 
 var slugRe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)

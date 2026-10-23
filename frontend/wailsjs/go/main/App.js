@@ -62,8 +62,8 @@ export function PickKeyFile() {
   return window['go']['main']['App']['PickKeyFile']();
 }
 
-export function Plan(arg1, arg2) {
-  return window['go']['main']['App']['Plan'](arg1, arg2);
+export function Plan(arg1, arg2, arg3) {
+  return window['go']['main']['App']['Plan'](arg1, arg2, arg3);
 }
 
 export function Probe(arg1, arg2) {

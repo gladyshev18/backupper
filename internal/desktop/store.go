@@ -29,6 +29,7 @@ type Settings struct {
 	Telegram           model.Telegram `json:"telegram"`
 	Theme              string         `json:"theme"` // system | light | dark
 	YandexClientID     string         `json:"yandexClientId"`
+	Language           string         `json:"language"` // ru | en; empty = by Windows language
 }
 
 type Config struct {

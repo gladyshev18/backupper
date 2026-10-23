@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"sort"
 	"strings"
@@ -69,7 +68,7 @@ func (a *Agent) openDests(job model.Job, runDir string) ([]dest, error) {
 }
 
 // PlanFor computes the chunk plan for a job with the current server state.
-func (a *Agent) PlanFor(job model.Job) model.ChunkPlan {
+func (a *Agent) PlanFor(job model.Job, lang string) model.ChunkPlan {
 	si := CollectSysInfo()
 	var speeds []float64
 	var maxFile int64
@@ -91,6 +90,7 @@ func (a *Agent) PlanFor(job model.Job) model.ChunkPlan {
 		SpeedBps:     chunk.CombinedSpeed(speeds),
 		ExpectedSize: a.state.ExpectedSize(job.ID),
 		MaxFileSize:  maxFile,
+		Lang:         lang,
 	})
 }
 
@@ -183,7 +183,7 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 	if err != nil {
 		return model.RunFailed, err.Error()
 	}
-	plan := a.PlanFor(job)
+	plan := a.PlanFor(job, "ru")
 	a.state.WithRun(run, func(r *model.Run) {
 		r.RemoteDir = runDir
 		r.Storages = job.Storages
@@ -229,7 +229,7 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 		if ctx.Err() != nil {
 			break
 		}
-		streams, err := planStreams(ctx, src, func(lvl, f string, args ...any) {
+		streams, cleanupSrc, err := a.planSource(ctx, src, func(lvl, f string, args ...any) {
 			if lvl == "warn" {
 				warnings++
 			}
@@ -269,6 +269,7 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 				r.RawBytes += rf.RawSize
 			})
 		}
+		cleanupSrc()
 	}
 
 	if ctx.Err() != nil {
@@ -350,21 +351,6 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	cmd, cleanup, err := s.build(ctx)
-	if err != nil {
-		rf.Error = err.Error()
-		a.logf(run, "error", "%s: %v", s.label, err)
-		return rf, false
-	}
-	defer cleanup()
-	stderr := &tailBuffer{}
-	cmd.Stderr = stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		rf.Error = err.Error()
-		return rf, false
-	}
-
 	var mu sync.Mutex
 	lastT, lastB := time.Now(), int64(0)
 	up := newUploader(ctx, dests, name, plan, func(l, f string, args ...any) { a.logf(run, l, f, args...) })
@@ -393,6 +379,7 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 
 	var out io.Writer = up
 	var enc io.WriteCloser
+	var err error
 	if recipient != nil {
 		enc, err = age.Encrypt(up, recipient)
 		if err != nil {
@@ -402,28 +389,34 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 		}
 		out = enc
 	}
-	gz, _ := gzip.NewWriterLevel(out, level)
 
 	a.state.WithRun(run, func(r *model.Run) {
 		r.Progress = &model.Progress{Stage: "Дамп", Source: s.label}
 	})
-	if err := cmd.Start(); err != nil {
+	src, err := s.start(ctx, func(l, f string, args ...any) { a.logf(run, l, f, args...) })
+	if err != nil {
 		up.Abort(err)
-		rf.Error = fmt.Sprintf("не удалось запустить %s: %v", cmd.Args[0], err)
-		if errors.Is(err, exec.ErrNotFound) {
-			rf.Error = fmt.Sprintf("на сервере не установлен %s", cmd.Args[0])
-		}
+		rf.Error = err.Error()
 		a.logf(run, "error", "%s", rf.Error)
 		return rf, false
 	}
+	defer src.cleanup()
 
-	counter := &countReader{r: stdout, fn: func(n int) {
+	// Dumps from commands are compressed here; sites on hosting send gzip already.
+	var gz io.WriteCloser = nopCloser{out}
+	if !src.precompressed {
+		gz, _ = gzip.NewWriterLevel(out, level)
+	}
+	counter := &countReader{r: src.r, fn: func(n int) {
 		mu.Lock()
 		lastB += int64(n)
 		cur := lastB
 		mu.Unlock()
 		if time.Since(lastT) > 500*time.Millisecond {
 			lastT = time.Now()
+			if src.raw != nil {
+				cur = src.raw()
+			}
 			a.state.WithRun(run, func(r *model.Run) {
 				if r.Progress != nil {
 					r.Progress.RawBytes = cur
@@ -441,7 +434,10 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 	if copyErr != nil {
 		cancel() // stop the dump: nobody reads its output anymore
 	}
-	waitErr := cmd.Wait()
+	warn, waitErr := src.wait()
+	if src.raw != nil {
+		raw = src.raw()
+	}
 	rf.RawSize = raw
 
 	if copyErr != nil {
@@ -453,28 +449,11 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 		a.logf(run, "error", "%s: %s", name, rf.Error)
 		return rf, false
 	}
-	warn := false
 	if waitErr != nil {
-		code := -1
-		var ee *exec.ExitError
-		if errors.As(waitErr, &ee) {
-			code = ee.ExitCode()
-		}
-		if s.warnExit[code] {
-			warn = true
-			a.logf(run, "warn", "%s завершился с предупреждением (код %d): %s", cmd.Args[0], code, stderr.String())
-		} else {
-			up.Abort(waitErr)
-			msg := stderr.String()
-			if msg == "" {
-				msg = waitErr.Error()
-			}
-			rf.Error = fmt.Sprintf("%s: %s", cmd.Args[0], msg)
-			a.logf(run, "error", "%s", rf.Error)
-			return rf, false
-		}
-	} else if e := stderr.String(); e != "" {
-		a.logf(run, "info", "%s: %s", cmd.Args[0], e)
+		up.Abort(waitErr)
+		rf.Error = waitErr.Error()
+		a.logf(run, "error", "%s", rf.Error)
+		return rf, false
 	}
 
 	a.state.WithRun(run, func(r *model.Run) {

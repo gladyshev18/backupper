@@ -32,6 +32,14 @@ func DefaultKeys() []string {
 }
 
 func loadSigner(path, passphrase string) (ssh.Signer, error) {
+	// A public key (.pub) cannot sign: use the private key next to it.
+	if strings.HasSuffix(strings.ToLower(path), ".pub") {
+		if _, err := os.Stat(path[:len(path)-4]); err == nil {
+			path = path[:len(path)-4]
+		} else {
+			return nil, fmt.Errorf("%s — это публичный ключ, а нужен приватный (файл без .pub)", filepath.Base(path))
+		}
+	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("не удалось прочитать ключ %s: %w", path, err)

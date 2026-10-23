@@ -14,7 +14,34 @@ const (
 	SourcePostgres = "postgres"
 	SourceFiles    = "files"
 	SourceConfigs  = "configs"
+	SourceSite     = "site" // site on shared hosting: PHP script over FTP/SFTP
 )
+
+const (
+	ProtoFTP  = "ftp"
+	ProtoFTPS = "ftps" // explicit TLS; port 990 means implicit TLS
+	ProtoSFTP = "sftp"
+)
+
+// SiteSource describes a site on shared hosting backed up through a temporary PHP script.
+type SiteSource struct {
+	Protocol    string `json:"protocol"`
+	Host        string `json:"host"`
+	Port        int    `json:"port,omitempty"`
+	User        string `json:"user"`
+	Password    string `json:"password,omitempty"`
+	Root        string `json:"root"` // site root as seen over FTP, e.g. /public_html
+	URL         string `json:"url"`  // the same root over HTTP, e.g. https://site.ru
+	DB          bool   `json:"db"`
+	Files       bool   `json:"files"`
+	CMS         string `json:"cms"` // auto | bitrix | wordpress | none
+	CMSExcludes bool   `json:"cmsExcludes"`
+	DBHost      string `json:"dbHost,omitempty"` // manual database settings override CMS detection
+	DBName      string `json:"dbName,omitempty"`
+	DBUser      string `json:"dbUser,omitempty"`
+	DBPassword  string `json:"dbPassword,omitempty"`
+	Insecure    bool   `json:"insecure,omitempty"` // do not verify TLS certificates (FTPS and HTTPS)
+}
 
 // Source is one thing to back up inside a job.
 type Source struct {
@@ -34,6 +61,8 @@ type Source struct {
 	// Files / configs.
 	Paths    []string `json:"paths,omitempty"`
 	Excludes []string `json:"excludes,omitempty"`
+
+	Site *SiteSource `json:"site,omitempty"`
 }
 
 const (
@@ -352,8 +381,38 @@ type BackupEntry struct {
 }
 
 type ProbeResult struct {
-	OK        bool     `json:"ok"`
-	Error     string   `json:"error,omitempty"`
-	Databases []string `json:"databases,omitempty"`
-	Paths     []string `json:"paths,omitempty"` // existing paths with sizes
+	OK        bool      `json:"ok"`
+	Error     string    `json:"error,omitempty"`
+	Databases []string  `json:"databases,omitempty"`
+	Paths     []string  `json:"paths,omitempty"` // existing paths with sizes
+	Site      *SiteInfo `json:"site,omitempty"`
+}
+
+// SiteInfo is what the PHP script reports about the hosting.
+type SiteInfo struct {
+	PHP         string   `json:"php"`
+	SAPI        string   `json:"sapi"`
+	OS          string   `json:"os"`
+	Root        string   `json:"root"`
+	CMS         string   `json:"cms"`
+	TimeLimit   int      `json:"timeLimit"`
+	MemoryLimit int64    `json:"memoryLimit"`
+	DiskFree    float64  `json:"diskFree"`
+	Deflate     bool     `json:"deflate"`
+	PDOMySQL    bool     `json:"pdoMysql"`
+	ServerTime  int64    `json:"serverTime"`
+	Top         []string `json:"top"`
+	DB          *SiteDB  `json:"db,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"`
+}
+
+type SiteDB struct {
+	Host   string  `json:"host"`
+	Name   string  `json:"name"`
+	User   string  `json:"user"`
+	From   string  `json:"from"`
+	Tables int     `json:"tables"`
+	Size   float64 `json:"size"`
+	Server string  `json:"server"`
+	Error  string  `json:"error,omitempty"`
 }

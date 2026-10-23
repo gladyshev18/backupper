@@ -34,7 +34,7 @@ export function Overview():Promise<Array<main.ServerStatus>>;
 
 export function PickKeyFile():Promise<string>;
 
-export function Plan(arg1:string,arg2:model.Job):Promise<model.ChunkPlan>;
+export function Plan(arg1:string,arg2:model.Job,arg3:string):Promise<model.ChunkPlan>;
 
 export function Probe(arg1:string,arg2:model.Source):Promise<model.ProbeResult>;
 

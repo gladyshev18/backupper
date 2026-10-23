@@ -65,6 +65,7 @@ export namespace desktop {
 	    telegram: model.Telegram;
 	    theme: string;
 	    yandexClientId: string;
+	    language: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -76,6 +77,7 @@ export namespace desktop {
 	        this.telegram = this.convertValues(source["telegram"], model.Telegram);
 	        this.theme = source["theme"];
 	        this.yandexClientId = source["yandexClientId"];
+	        this.language = source["language"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -466,6 +468,48 @@ export namespace model {
 	        this.cron = source["cron"];
 	    }
 	}
+	export class SiteSource {
+	    protocol: string;
+	    host: string;
+	    port?: number;
+	    user: string;
+	    password?: string;
+	    root: string;
+	    url: string;
+	    db: boolean;
+	    files: boolean;
+	    cms: string;
+	    cmsExcludes: boolean;
+	    dbHost?: string;
+	    dbName?: string;
+	    dbUser?: string;
+	    dbPassword?: string;
+	    insecure?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SiteSource(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.protocol = source["protocol"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.password = source["password"];
+	        this.root = source["root"];
+	        this.url = source["url"];
+	        this.db = source["db"];
+	        this.files = source["files"];
+	        this.cms = source["cms"];
+	        this.cmsExcludes = source["cmsExcludes"];
+	        this.dbHost = source["dbHost"];
+	        this.dbName = source["dbName"];
+	        this.dbUser = source["dbUser"];
+	        this.dbPassword = source["dbPassword"];
+	        this.insecure = source["insecure"];
+	    }
+	}
 	export class Source {
 	    id: string;
 	    type: string;
@@ -479,6 +523,7 @@ export namespace model {
 	    extraArgs?: string;
 	    paths?: string[];
 	    excludes?: string[];
+	    site?: SiteSource;
 	
 	    static createFrom(source: any = {}) {
 	        return new Source(source);
@@ -498,7 +543,26 @@ export namespace model {
 	        this.extraArgs = source["extraArgs"];
 	        this.paths = source["paths"];
 	        this.excludes = source["excludes"];
+	        this.site = this.convertValues(source["site"], SiteSource);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class JobView {
 	    id: string;
@@ -846,11 +910,94 @@ export namespace model {
 	
 	
 	
+	export class SiteDB {
+	    host: string;
+	    name: string;
+	    user: string;
+	    from: string;
+	    tables: number;
+	    size: number;
+	    server: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SiteDB(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.name = source["name"];
+	        this.user = source["user"];
+	        this.from = source["from"];
+	        this.tables = source["tables"];
+	        this.size = source["size"];
+	        this.server = source["server"];
+	        this.error = source["error"];
+	    }
+	}
+	export class SiteInfo {
+	    php: string;
+	    sapi: string;
+	    os: string;
+	    root: string;
+	    cms: string;
+	    timeLimit: number;
+	    memoryLimit: number;
+	    diskFree: number;
+	    deflate: boolean;
+	    pdoMysql: boolean;
+	    serverTime: number;
+	    top: string[];
+	    db?: SiteDB;
+	    warnings?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new SiteInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.php = source["php"];
+	        this.sapi = source["sapi"];
+	        this.os = source["os"];
+	        this.root = source["root"];
+	        this.cms = source["cms"];
+	        this.timeLimit = source["timeLimit"];
+	        this.memoryLimit = source["memoryLimit"];
+	        this.diskFree = source["diskFree"];
+	        this.deflate = source["deflate"];
+	        this.pdoMysql = source["pdoMysql"];
+	        this.serverTime = source["serverTime"];
+	        this.top = source["top"];
+	        this.db = this.convertValues(source["db"], SiteDB);
+	        this.warnings = source["warnings"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ProbeResult {
 	    ok: boolean;
 	    error?: string;
 	    databases?: string[];
 	    paths?: string[];
+	    site?: SiteInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new ProbeResult(source);
@@ -862,8 +1009,30 @@ export namespace model {
 	        this.error = source["error"];
 	        this.databases = source["databases"];
 	        this.paths = source["paths"];
+	        this.site = this.convertValues(source["site"], SiteInfo);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
+	
+	
+	
 	
 	
 	

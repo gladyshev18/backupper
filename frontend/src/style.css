@@ -270,7 +270,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .source-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .source-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
 .source-body { padding: 4px 14px 14px; display: flex; flex-direction: column; gap: 12px; }
-.add-source { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.add-source { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
 .add-source button { border: 1px dashed var(--border-strong); background: transparent; border-radius: 10px; padding: 12px 8px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; color: var(--text-2); font-weight: 500; font-size: 13px; }
 .add-source button:hover { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
 

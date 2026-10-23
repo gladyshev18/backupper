@@ -2,113 +2,142 @@
 
 # 🛡️ Backupper
 
-**Бэкапы серверов в Яндекс Диск и Облако Mail.ru — по расписанию, без участия вашего компьютера**
+**Server backups to Yandex Disk and Mail.ru Cloud — on schedule, without your computer**
 
 ![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)
 ![Wails](https://img.shields.io/badge/Wails-v2-DF0000)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Windows](https://img.shields.io/badge/панель-Windows%2011-0078D4?logo=windows&logoColor=white)
-![Linux](https://img.shields.io/badge/агент-Linux%20amd64%20%7C%20arm64-FCC624?logo=linux&logoColor=black)
+![Windows](https://img.shields.io/badge/panel-Windows%2011-0078D4?logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/agent-Linux%20amd64%20%7C%20arm64-FCC624?logo=linux&logoColor=black)
+![PHP](https://img.shields.io/badge/shared%20hosting-PHP%207.1+-777BB4?logo=php&logoColor=white)
 
 </div>
 
-Базы MySQL / MariaDB / PostgreSQL, файлы сайтов и конфиги серверов уходят в облако **потоком, кусками** — без временных архивов
-на диске сервера. Настраивается всё из удобной панели для Windows, а работает — само, на сервере.
+MySQL / MariaDB / PostgreSQL databases, site files and server configs are **streamed to the cloud in parts** — no temporary
+archives on the server disk. Everything is configured from a Windows desktop panel, and the work happens on the server by itself.
+Sites on shared hosting without SSH are backed up too, through a one-off PHP script uploaded over FTP.
 
-## ✨ Возможности
+The interface is available in **English and Russian**.
 
-- **Не зависит от ПК.** На сервер ставится лёгкий агент (служба systemd), он сам выполняет задачи по расписанию.
-- **Не нужно место на диске.** `дамп → gzip → шифрование → куски в памяти → облако`. Бэкап базы на 50 ГБ проходит на сервере с 2 ГБ свободного места.
-- **Умный размер кусков.** Подбирается по свободной RAM, измеренной скорости до облака и лимитам облака; во время бэкапа куски уменьшаются при нехватке памяти, а непрошедший кусок делится пополам.
-- **Облака:** Яндекс Диск (REST API или WebDAV), Облако Mail.ru (WebDAV), любой WebDAV (Nextcloud и др.). Несколько облаков в одной задаче.
-- **Источники:** MySQL/MariaDB (`mysqldump`), PostgreSQL (`pg_dump` / `pg_dumpall`), файлы сайта с исключениями, конфиги сервера (≈20 типовых путей).
-- **Расписание:** ежедневно, по дням недели, раз в месяц, каждые N часов или cron — с предпросмотром ближайших запусков.
-- **Ротация:** хранить N последних успешных копий, неудачные и недокачанные удаляются.
-- **Шифрование** в формате [age](https://age-encryption.org) (совместимо с утилитой `age -d`).
-- **Уведомления в Telegram** отправляет сам агент — придут, даже если ПК выключен.
-- **Восстановление из панели:** список копий прямо из облака, скачивание с расшифровкой.
-- **Безопасно:** панель ходит к агенту через SSH-туннель по вашему ключу, агент слушает только `127.0.0.1` и требует токен; секреты панели зашифрованы DPAPI.
-- **Бережно к сайтам:** агент работает с `nice 10` и пониженным приоритетом ввода-вывода.
+## ✨ Features
 
-## 🧭 Как это устроено
+- **Independent of your PC.** A lightweight agent (systemd service) runs on each server and executes jobs on schedule.
+- **No disk space needed.** `dump → gzip → encryption → parts in memory → cloud`. A 50 GB database backs up on a server with 2 GB free.
+- **Smart part size.** Picked from free RAM, measured upload speed and cloud limits; during a backup parts shrink when memory runs low, and a part the network rejects is split in half.
+- **Clouds:** Yandex Disk (REST API or WebDAV), Mail.ru Cloud (WebDAV), any WebDAV (Nextcloud, etc.). Several clouds per job.
+- **Sources:** MySQL/MariaDB (`mysqldump`), PostgreSQL (`pg_dump` / `pg_dumpall`), site files with excludes, server configs (~20 common paths).
+- **Shared hosting (FTP / FTPS / SFTP):** database and files of PHP sites, credentials auto-detected for **1C-Bitrix** and **WordPress**.
+- **Schedule:** daily, on weekdays, monthly, every N hours or cron — with a preview of the next runs.
+- **Rotation:** keep the N latest successful backups; failed and incomplete ones are removed.
+- **Encryption** in the [age](https://age-encryption.org) format (works with `age -d`).
+- **Telegram notifications** are sent by the agent itself — they arrive even when your PC is off.
+- **Restore from the panel:** list backups straight from the cloud, download with decryption.
+- **Secure:** the panel talks to the agent through an SSH tunnel with your key; the agent listens on `127.0.0.1` only and requires a token; panel secrets are encrypted with DPAPI.
+- **Gentle on sites:** the agent runs with `nice 10` and low I/O priority.
+
+## 🧭 How it works
 
 ```mermaid
 flowchart LR
-    subgraph PC["Windows — панель Backupper.exe"]
-        UI["Интерфейс<br/>React + Wails"]
+    subgraph PC["Windows — Backupper.exe panel"]
+        UI["Interface<br/>React + Wails"]
     end
-    subgraph S1["Сервер"]
+    subgraph S1["Your server"]
         A1["backupper-agent<br/>systemd, cron"]
-        D1[("MySQL / PostgreSQL<br/>файлы, /etc")]
+        D1[("MySQL / PostgreSQL<br/>files, /etc")]
     end
-    Y["☁️ Яндекс Диск"]
-    M["☁️ Облако Mail.ru"]
-    UI -- "SSH-туннель по ключу" --> A1
+    subgraph H["Shared hosting"]
+        P["one-off PHP script"]
+        W[("site DB<br/>and files")]
+    end
+    Y["☁️ Yandex Disk"]
+    M["☁️ Mail.ru Cloud"]
+    UI -- "SSH tunnel with your key" --> A1
     D1 -- "dump | gzip | age" --> A1
-    A1 -- "куски по 8–512 МБ" --> Y
-    A1 -- "куски" --> M
+    A1 -- "FTP: upload → HTTPS: fetch → delete" --> P
+    W --> P
+    A1 -- "parts of 8–512 MB" --> Y
+    A1 -- "parts" --> M
 ```
 
-В облаке копии лежат так:
+Backups are stored in the cloud like this:
 
 ```
-<папка>/<сервер>/<задача>/2026-10-23_03-00-00/
+<folder>/<server>/<job>/2026-10-23_03-00-00/
     shop__shop.sql.gz.age.part0001
     shop__shop.sql.gz.age.part0002
     site.tar.gz.age.part0001
     manifest.json
 ```
 
-## 🚀 Начало работы
+## 🌐 Sites on shared hosting
 
-1. Скачайте или соберите `Backupper.exe` и запустите.
-2. **Облака** → подключите Яндекс Диск (OAuth-токен, инструкция прямо в форме) или Облако Mail.ru (пароль для внешнего приложения).
-3. **Добавить сервер** → адрес, пользователь (`root` или пользователь с `sudo` без пароля), приватный SSH-ключ → **Установить агент**.
-4. **Новая задача** → источники, расписание, облака, сколько копий хранить, шифрование, размер кусков.
-5. **Настройки** → пароль шифрования и Telegram.
+For hostings with FTP but no SSH, a job source **“Site on hosting (FTP)”** is available:
 
-## 🔧 Сборка
+1. The agent connects over FTP / FTPS / SFTP and uploads `backupper_<random>.php` into the site root.
+2. Over HTTPS it asks the script for the database dump and the files **in portions** of ~20 s each — this fits any `max_execution_time`, and nothing is written to the hosting disk.
+3. Every request is signed with HMAC-SHA256 and a timestamp; every response is encrypted with AES-256-GCM using a secret that exists only for this run. Without a valid signature the script answers with a plain 404.
+4. Right after the backup the script is deleted. Leftovers of a crashed run are removed on the next one.
 
-Нужны Go 1.25+, Node.js 20+ и Wails CLI:
+Database credentials are read from `bitrix/.settings.php` / `dbconn.php` or `wp-config.php` (or entered manually), and CMS caches are skipped.
+
+## 🚀 Getting started
+
+1. Download or build `Backupper.exe` and run it.
+2. **Clouds** → connect Yandex Disk (OAuth token, instructions are in the form) or Mail.ru Cloud (app password).
+3. **Add server** → address, user (`root` or a user with passwordless `sudo`), private SSH key → **Install agent**.
+4. **New job** → sources, schedule, clouds, how many backups to keep, encryption, part size.
+5. **Settings** → encryption password, Telegram, interface language.
+
+## 🔧 Building
+
+Requires Go 1.25+, Node.js 20+ and the Wails CLI:
 
 ```powershell
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
 .\build.ps1
 ```
 
-Скрипт собирает агентов для `linux/amd64` и `linux/arm64`, вкладывает их в панель и собирает `build\bin\Backupper.exe`.
+The script builds agents for `linux/amd64` and `linux/arm64`, embeds them into the panel and produces `build\bin\Backupper.exe`.
 
-Тесты:
+Tests:
 
 ```powershell
 go test ./internal/...
+# end-to-end test of the shared-hosting backup with real PHP, MariaDB and SFTPGo (OSPanel modules)
+$env:BACKUPPER_IT = "D:\OSPanel\modules"; go test ./internal/site -run IT -v
 ```
 
-## ♻️ Восстановление вручную
+## ♻️ Restoring by hand
 
-Панель не обязательна — части склеиваются обычными утилитами:
+The panel is optional — parts are joined with standard tools:
 
 ```bash
-cat site.tar.gz.age.part* | age -d | tar -xz -C /restore   # зашифрованный архив
-cat shop__shop.sql.gz.part* | gunzip | mysql shop           # дамп без шифрования
+cat site.tar.gz.age.part* | age -d | tar -xz -C /restore   # encrypted archive
+cat shop__shop.sql.gz.part* | gunzip | mysql shop           # unencrypted dump
 ```
 
-## 📁 Структура проекта
+## 📁 Project layout
 
-| Путь | Что внутри |
+| Path | Contents |
 |---|---|
-| `cmd/agent` | точка входа агента (`serve`, `install`, `uninstall`, `token`) |
-| `internal/agent` | планировщик, источники, потоковая выгрузка, ротация, API |
-| `internal/chunk` | подбор размера кусков |
-| `internal/storage` | клиенты Яндекс Диска (REST) и WebDAV |
-| `internal/desktop` | SSH, установка агента, хранилище настроек панели |
-| `frontend` | интерфейс панели (React + TypeScript) |
+| `cmd/agent` | agent entry point (`serve`, `install`, `uninstall`, `token`) |
+| `internal/agent` | scheduler, sources, streaming upload, rotation, API |
+| `internal/site` | shared-hosting backup: FTP/SFTP client, PHP script, signed protocol |
+| `internal/chunk` | part size planner |
+| `internal/storage` | Yandex Disk (REST) and WebDAV clients |
+| `internal/desktop` | SSH, agent installation, panel settings storage |
+| `frontend` | panel interface (React + TypeScript), translations in `src/i18n.en.ts` |
 
-## 📍 Где что лежит на сервере
+## 📍 Where things live on the server
 
 | | |
 |---|---|
-| Агент | `/usr/local/bin/backupper-agent`, служба `backupper-agent` |
-| Настройки | `/etc/backupper/config.json` (`0600`, root) |
-| История запусков | `/var/lib/backupper/` |
-| Логи службы | `journalctl -u backupper-agent` |
+| Agent | `/usr/local/bin/backupper-agent`, service `backupper-agent` |
+| Settings | `/etc/backupper/config.json` (`0600`, root) |
+| Run history, SFTP host keys | `/var/lib/backupper/` |
+| Service logs | `journalctl -u backupper-agent` |
+
+## 👤 Author
+
+Igor Gladyshev — Telegram [@gladyshev](https://t.me/gladyshev), [gladyshev18@gmail.com](mailto:gladyshev18@gmail.com)

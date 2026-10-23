@@ -44,6 +44,8 @@ type Input struct {
 	ExpectedSize int64
 	// MaxFileSize is the smallest per-file limit among destinations (0 = none).
 	MaxFileSize int64
+	// Lang of the explanations: "ru" (default) or "en".
+	Lang string
 }
 
 func floorNice(v int64) int64 {
@@ -65,17 +67,23 @@ func ceilNice(v int64) int64 {
 	return Sizes[len(Sizes)-1]
 }
 
-func HumanBytes(n int64) string {
+func HumanBytes(n int64) string { return humanBytesLang(n, "ru") }
+
+func humanBytesLang(n int64, lang string) string {
+	u := [4]string{"ГБ", "МБ", "КБ", "Б"}
+	if lang == "en" {
+		u = [4]string{"GB", "MB", "KB", "B"}
+	}
 	f := float64(n)
 	switch {
 	case n >= 1<<30:
-		return fmt.Sprintf("%.1f ГБ", f/(1<<30))
+		return fmt.Sprintf("%.1f %s", f/(1<<30), u[0])
 	case n >= 1<<20:
-		return fmt.Sprintf("%.0f МБ", f/(1<<20))
+		return fmt.Sprintf("%.0f %s", f/(1<<20), u[1])
 	case n >= 1<<10:
-		return fmt.Sprintf("%.0f КБ", f/(1<<10))
+		return fmt.Sprintf("%.0f %s", f/(1<<10), u[2])
 	}
-	return fmt.Sprintf("%d Б", n)
+	return fmt.Sprintf("%d %s", n, u[3])
 }
 
 func humanDur(sec float64) string {
@@ -88,6 +96,24 @@ func humanDur(sec float64) string {
 // Plan computes the part size and explains the decision in plain words.
 func Plan(in Input) model.ChunkPlan {
 	s := in.Settings.Normalized()
+	tr := func(format string, args ...any) string {
+		if in.Lang == "en" {
+			if f, ok := enMessages[format]; ok {
+				format = f
+			}
+		}
+		return fmt.Sprintf(format, args...)
+	}
+	hb := func(n int64) string { return humanBytesLang(n, in.Lang) }
+	dur := func(sec float64) string {
+		if in.Lang == "en" {
+			if sec < 90 {
+				return fmt.Sprintf("%.0f s", sec)
+			}
+			return fmt.Sprintf("%.1f min", sec/60)
+		}
+		return humanDur(sec)
+	}
 	p := model.ChunkPlan{
 		MemAvailable:  in.MemAvailable,
 		DiskFree:      in.DiskFree,
@@ -117,7 +143,7 @@ func Plan(in Input) model.ChunkPlan {
 		buffer = model.BufferMemory
 		if byMem < MinSize && byDisk >= 4*MinSize {
 			buffer = model.BufferDisk
-			p.Reasons = append(p.Reasons, fmt.Sprintf("Свободной памяти мало (%s), поэтому куски буферизуются во временных файлах на диске.", HumanBytes(int64(in.MemAvailable))))
+			p.Reasons = append(p.Reasons, tr("Свободной памяти мало (%s), поэтому куски буферизуются во временных файлах на диске.", hb(int64(in.MemAvailable))))
 		}
 	}
 	limit := byMem
@@ -134,25 +160,25 @@ func Plan(in Input) model.ChunkPlan {
 		if size > MaxManualSize {
 			size = MaxManualSize
 		}
-		p.Reasons = append(p.Reasons, fmt.Sprintf("Размер задан вручную: %s.", HumanBytes(size)))
+		p.Reasons = append(p.Reasons, tr("Размер задан вручную: %s.", hb(size)))
 		if size > limit {
 			if buffer == model.BufferDisk {
-				p.Warnings = append(p.Warnings, fmt.Sprintf("Два куска по %s займут больше половины свободного места на диске (%s).", HumanBytes(size), HumanBytes(int64(in.DiskFree))))
+				p.Warnings = append(p.Warnings, tr("Два куска по %s займут больше половины свободного места на диске (%s).", hb(size), hb(int64(in.DiskFree))))
 			} else {
-				p.Warnings = append(p.Warnings, fmt.Sprintf("Два куска по %s займут больше %d%% свободной памяти (%s). Сервер может начать свопиться или агент будет убит OOM-killer.", HumanBytes(size), s.MaxMemoryPercent, HumanBytes(int64(in.MemAvailable))))
+				p.Warnings = append(p.Warnings, tr("Два куска по %s займут больше %d%% свободной памяти (%s). Сервер может начать свопиться или агент будет убит OOM-killer.", hb(size), s.MaxMemoryPercent, hb(int64(in.MemAvailable))))
 			}
 		}
 	} else {
 		if buffer == model.BufferDisk {
-			p.Reasons = append(p.Reasons, fmt.Sprintf("По диску: до %s на кусок (половина свободного места %s, два куска одновременно).", HumanBytes(byDisk), HumanBytes(int64(in.DiskFree))))
+			p.Reasons = append(p.Reasons, tr("По диску: до %s на кусок (половина свободного места %s, два куска одновременно).", hb(byDisk), hb(int64(in.DiskFree))))
 		} else {
-			p.Reasons = append(p.Reasons, fmt.Sprintf("По памяти: до %s на кусок (%d%% от %s свободной RAM за вычетом резерва %s, два куска одновременно).", HumanBytes(byMem), s.MaxMemoryPercent, HumanBytes(int64(in.MemAvailable)), HumanBytes(reserve)))
+			p.Reasons = append(p.Reasons, tr("По памяти: до %s на кусок (%d%% от %s свободной RAM за вычетом резерва %s, два куска одновременно).", hb(byMem), s.MaxMemoryPercent, hb(int64(in.MemAvailable)), hb(reserve)))
 		}
 		byNet := int64(speed * float64(s.TargetSeconds))
 		if in.SpeedBps > 0 {
-			p.Reasons = append(p.Reasons, fmt.Sprintf("По сети: ~%s за %d с при измеренной скорости %s/с — при обрыве повторно отправится немного.", HumanBytes(byNet), s.TargetSeconds, HumanBytes(int64(speed))))
+			p.Reasons = append(p.Reasons, tr("По сети: ~%s за %d с при измеренной скорости %s/с — при обрыве повторно отправится немного.", hb(byNet), s.TargetSeconds, hb(int64(speed))))
 		} else {
-			p.Reasons = append(p.Reasons, fmt.Sprintf("По сети: скорость ещё не измерена, принято %s/с → ~%s за %d с. Нажмите «Измерить скорость», чтобы уточнить.", HumanBytes(int64(speed)), HumanBytes(byNet), s.TargetSeconds))
+			p.Reasons = append(p.Reasons, tr("По сети: скорость ещё не измерена, принято %s/с → ~%s за %d с. Нажмите «Измерить скорость», чтобы уточнить.", hb(int64(speed)), hb(byNet), s.TargetSeconds))
 		}
 		size = byNet
 		if limit < size {
@@ -162,7 +188,7 @@ func Plan(in Input) model.ChunkPlan {
 			want := ceilNice(in.ExpectedSize / MaxParts)
 			if want <= limit {
 				size = want
-				p.Reasons = append(p.Reasons, fmt.Sprintf("Прошлый архив был %s — кусок увеличен до %s, чтобы частей было не больше %d.", HumanBytes(in.ExpectedSize), HumanBytes(want), MaxParts))
+				p.Reasons = append(p.Reasons, tr("Прошлый архив был %s — кусок увеличен до %s, чтобы частей было не больше %d.", hb(in.ExpectedSize), hb(want), MaxParts))
 			}
 		}
 		if size > MaxAutoSize {
@@ -173,13 +199,13 @@ func Plan(in Input) model.ChunkPlan {
 
 	if in.MaxFileSize > 0 && size > in.MaxFileSize {
 		size = floorNice(in.MaxFileSize)
-		p.Reasons = append(p.Reasons, fmt.Sprintf("Облако принимает файлы не больше %s — кусок уменьшен до %s.", HumanBytes(in.MaxFileSize), HumanBytes(size)))
+		p.Reasons = append(p.Reasons, tr("Облако принимает файлы не больше %s — кусок уменьшен до %s.", hb(in.MaxFileSize), hb(size)))
 	}
 	if size < MinSize {
 		size = MinSize
 	}
 	if buffer == model.BufferMemory && int64(in.MemAvailable) > 0 && Buffers*size+reserve > int64(in.MemAvailable) {
-		p.Warnings = append(p.Warnings, fmt.Sprintf("Свободной памяти (%s) почти не хватает даже на минимальные куски. Включите буфер на диске или освободите RAM.", HumanBytes(int64(in.MemAvailable))))
+		p.Warnings = append(p.Warnings, tr("Свободной памяти (%s) почти не хватает даже на минимальные куски. Включите буфер на диске или освободите RAM.", hb(int64(in.MemAvailable))))
 	}
 
 	p.Size = size
@@ -195,10 +221,10 @@ func Plan(in Input) model.ChunkPlan {
 		p.Parts = int(math.Ceil(float64(in.ExpectedSize) / float64(size)))
 	}
 	if p.PartSeconds > 300 {
-		p.Warnings = append(p.Warnings, fmt.Sprintf("Один кусок будет загружаться ~%s. При обрыве он отправляется заново целиком — лучше уменьшить размер.", humanDur(p.PartSeconds)))
+		p.Warnings = append(p.Warnings, tr("Один кусок будет загружаться ~%s. При обрыве он отправляется заново целиком — лучше уменьшить размер.", dur(p.PartSeconds)))
 	}
 	if p.Parts > 1000 {
-		p.Warnings = append(p.Warnings, fmt.Sprintf("Получится ~%d частей — облако будет медленно показывать папку. Увеличьте кусок, если позволяет память.", p.Parts))
+		p.Warnings = append(p.Warnings, tr("Получится ~%d частей — облако будет медленно показывать папку. Увеличьте кусок, если позволяет память.", p.Parts))
 	}
 	return p
 }

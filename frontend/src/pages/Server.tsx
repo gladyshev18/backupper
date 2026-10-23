@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import {
   Archive, ArrowUpCircle, Clock, Cpu, Database, Download, FileArchive, FolderTree, History, MoreHorizontal,
-  Pencil, Play, Plus, RefreshCw, Server as ServerIcon, Settings2, Trash2, Wrench, XCircle, CheckCircle2, Lock, FolderOpen,
+  Pencil, Play, Plus, RefreshCw, Globe, Server as ServerIcon, Settings2, Trash2, Wrench, XCircle, CheckCircle2, Lock, FolderOpen,
 } from 'lucide-react'
 import { useApp } from '../App'
 import { api, onEvent } from '../api'
@@ -9,6 +9,7 @@ import type { BackupEntry, JobView, Run, ServerCheck, ServerStatus } from '../ty
 import { Alert, Bar, Button, Empty, Menu, Modal, StatusBadge, usePoll, useUI } from '../components/ui'
 import RunProgress from '../components/RunProgress'
 import { bytes, cls, dateTime, duration, kindLabels, relative, scheduleText, sourceLabels } from '../util'
+import { locale, t } from '../i18n'
 import ServerForm from './ServerForm'
 import JobEditor from './JobEditor'
 
@@ -33,19 +34,19 @@ export default function ServerPage({ id }: { id: string }) {
   usePoll(() => { refresh() }, activeCount ? 2500 : 15000, [id, activeCount])
 
   const removeServer = async () => {
-    if (!await confirm(<>Удалить сервер <b>{server.name}</b> из панели? Агент на сервере продолжит делать бэкапы по расписанию — чтобы остановить его, сначала удалите агент.</>, 'Удалить', true)) return
+    if (!await confirm(t('Удалить сервер «{name}» из панели? Агент на сервере продолжит делать бэкапы по расписанию — чтобы остановить его, сначала удалите агент.', { name: server.name }), t('Удалить'), true)) return
     await run('del', async () => { await api.deleteServer(id); await reload(); go({ page: 'overview' }) })
   }
   const uninstall = async () => {
-    if (!await confirm(<>Удалить агент с сервера <b>{server.name}</b>? Расписание перестанет работать. Настройки задач и история останутся на сервере в /etc/backupper (на случай переустановки). Копии в облаке не удаляются.</>, 'Удалить агент', true)) return
-    await run('un', async () => { await api.uninstallAgent(id, false); await reload(); await refresh() }, 'Агент удалён')
+    if (!await confirm(t('Удалить агент с сервера «{name}»? Расписание перестанет работать. Настройки задач и история останутся на сервере в /etc/backupper (на случай переустановки). Копии в облаке не удаляются.', { name: server.name }), t('Удалить агент'), true)) return
+    await run('un', async () => { await api.uninstallAgent(id, false); await reload(); await refresh() }, t('Агент удалён'))
   }
   const install = () => run('inst', async () => {
     const v = await api.installAgent(id)
     await reload()
     await refresh()
     return v
-  }, 'Агент установлен и запущен')
+  }, t('Агент установлен и запущен'))
 
   const info = st?.info
 
@@ -54,23 +55,23 @@ export default function ServerPage({ id }: { id: string }) {
       <div className="page-head">
         <div className="job-icon" style={{ width: 48, height: 48, borderRadius: 13 }}><ServerIcon size={22} /></div>
         <div className="grow">
-          <h1 className="row">{server.name} {st && <span className={cls('badge', st.online ? 'success' : 'danger')}>{st.online ? 'на связи' : 'нет связи'}</span>}</h1>
-          <div className="desc">{server.user}@{server.host}:{server.port}{info && <> · {info.sys.os} · агент {info.version}</>}</div>
+          <h1 className="row">{server.name} {st && <span className={cls('badge', st.online ? 'success' : 'danger')}>{st.online ? t('на связи') : t('нет связи')}</span>}</h1>
+          <div className="desc">{server.user}@{server.host}:{server.port}{info && <> · {info.sys.os} · {t('агент {v}', { v: info.version })}</>}</div>
         </div>
         <div className="actions">
-          {st?.online && <Button variant="primary" icon={<Plus size={16} />} onClick={() => setJob('new')}>Новая задача</Button>}
+          {st?.online && <Button variant="primary" icon={<Plus size={16} />} onClick={() => setJob('new')}>{t('Новая задача')}</Button>}
           <Button icon={<RefreshCw size={15} className={loading ? 'spin' : ''} />} onClick={() => { setLoading(true); refresh() }} />
           <Menu trigger={<Button icon={<MoreHorizontal size={16} />} />}>
-            <button onClick={() => setEditing(true)}><Settings2 size={15} /> Настройки подключения</button>
-            {st?.online && <button onClick={install}><ArrowUpCircle size={15} /> Переустановить агент</button>}
-            {st?.online && <button className="danger" onClick={uninstall}><XCircle size={15} /> Удалить агент с сервера</button>}
+            <button onClick={() => setEditing(true)}><Settings2 size={15} /> {t('Настройки подключения')}</button>
+            {st?.online && <button onClick={install}><ArrowUpCircle size={15} /> {t('Переустановить агент')}</button>}
+            {st?.online && <button className="danger" onClick={uninstall}><XCircle size={15} /> {t('Удалить агент с сервера')}</button>}
             <hr />
-            <button className="danger" onClick={removeServer}><Trash2 size={15} /> Удалить сервер из панели</button>
+            <button className="danger" onClick={removeServer}><Trash2 size={15} /> {t('Удалить сервер из панели')}</button>
           </Menu>
         </div>
       </div>
 
-      {!st && <div className="card card-pad"><Bar value={0} indeterminate /><div className="small muted mt8">Подключаемся по SSH…</div></div>}
+      {!st && <div className="card card-pad"><Bar value={0} indeterminate /><div className="small muted mt8">{t('Подключаемся по SSH…')}</div></div>}
 
       {st && !st.online && <InstallPanel id={id} status={st} onInstall={install} installing={busy === 'inst'} onEdit={() => setEditing(true)} onRetry={refresh} />}
 
@@ -80,8 +81,8 @@ export default function ServerPage({ id }: { id: string }) {
             <div className="mt8" style={{ marginBottom: 16 }}>
               <Alert tone="warning" icon={<ArrowUpCircle size={17} />}>
                 <div className="row">
-                  <span className="grow">На сервере агент версии {info.version}, в панели — {state.version}. Обновите, чтобы получить новые возможности.</span>
-                  <Button size="sm" loading={busy === 'inst'} onClick={install}>Обновить агент</Button>
+                  <span className="grow">{t('На сервере агент версии {a}, в панели — {p}. Обновите, чтобы получить новые возможности.', { a: info.version, p: state.version })}</span>
+                  <Button size="sm" loading={busy === 'inst'} onClick={install}>{t('Обновить агент')}</Button>
                 </div>
               </Alert>
             </div>
@@ -92,10 +93,10 @@ export default function ServerPage({ id }: { id: string }) {
             </div>
           )}
           <div className="tabs">
-            <button className={cls(tab === 'jobs' && 'on')} onClick={() => setTab('jobs')}><Archive size={15} /> Задачи <span className="faint">{info.jobs.length}</span></button>
-            <button className={cls(tab === 'history' && 'on')} onClick={() => setTab('history')}><History size={15} /> История</button>
-            <button className={cls(tab === 'backups' && 'on')} onClick={() => setTab('backups')}><FileArchive size={15} /> Копии в облаке</button>
-            <button className={cls(tab === 'system' && 'on')} onClick={() => setTab('system')}><Cpu size={15} /> Сервер</button>
+            <button className={cls(tab === 'jobs' && 'on')} onClick={() => setTab('jobs')}><Archive size={15} /> {t('Задачи')} <span className="faint">{info.jobs.length}</span></button>
+            <button className={cls(tab === 'history' && 'on')} onClick={() => setTab('history')}><History size={15} /> {t('История')}</button>
+            <button className={cls(tab === 'backups' && 'on')} onClick={() => setTab('backups')}><FileArchive size={15} /> {t('Копии в облаке')}</button>
+            <button className={cls(tab === 'system' && 'on')} onClick={() => setTab('system')}><Cpu size={15} /> {t('Сервер')}</button>
           </div>
           {tab === 'jobs' && <JobsTab id={id} st={st} onEdit={setJob} refresh={refresh} />}
           {tab === 'history' && <HistoryTab id={id} jobs={info.jobs} />}
@@ -139,22 +140,21 @@ function InstallPanel({ id, status, onInstall, installing, onEdit, onRetry }: {
       <div className="row" style={{ alignItems: 'flex-start', gap: 18 }}>
         <div className="job-icon" style={{ width: 52, height: 52 }}><Wrench size={24} /></div>
         <div className="grow">
-          <div className="card-title" style={{ fontSize: 17 }}>{status.noAgent ? 'Установите агент на сервер' : 'Нет связи с агентом'}</div>
+          <div className="card-title" style={{ fontSize: 17 }}>{status.noAgent ? t('Установите агент на сервер') : t('Нет связи с агентом')}</div>
           <div className="muted mt8" style={{ maxWidth: 640 }}>
-            Агент — это небольшая служба (~10 МБ), которая сама делает бэкапы по расписанию, даже когда этот компьютер выключен.
-            Панель подключается к нему через SSH-туннель — никаких открытых портов.
+            {t('Агент — это небольшая служба (~10 МБ), которая сама делает бэкапы по расписанию, даже когда этот компьютер выключен. Панель подключается к нему через SSH-туннель — никаких открытых портов.')}
           </div>
           {!status.noAgent && status.error && <div className="mt12"><Alert tone="danger">{status.error}</Alert></div>}
           <div className="col mt16" style={{ gap: 8 }}>
-            <Item ok={checking ? undefined : !!sshOk}>Подключение по SSH {chk?.error && !sshOk && <span style={{ color: 'var(--danger)' }}>— {chk.error}</span>}{sshOk && <span className="faint"> — {chk!.os}, {chk!.arch}</span>}</Item>
-            {sshOk && <Item ok={!!privOk}>{chk!.root ? 'Вход под root' : chk!.sudo ? 'sudo без пароля доступен' : 'Нужен root или sudo без пароля (NOPASSWD)'}</Item>}
-            {sshOk && <Item ok={chk!.systemd}>systemd {chk!.systemd ? 'есть' : 'не найден'}</Item>}
-            {sshOk && <Item ok={chk!.agentInstalled}>{chk!.agentInstalled ? `Агент установлен (${chk!.agentVersion})` : 'Агент ещё не установлен'}</Item>}
+            <Item ok={checking ? undefined : !!sshOk}>{t('Подключение по SSH')} {chk?.error && !sshOk && <span style={{ color: 'var(--danger)' }}>— {chk.error}</span>}{sshOk && <span className="faint"> — {chk!.os}, {chk!.arch}</span>}</Item>
+            {sshOk && <Item ok={!!privOk}>{chk!.root ? t('Вход под root') : chk!.sudo ? t('sudo без пароля доступен') : t('Нужен root или sudo без пароля (NOPASSWD)')}</Item>}
+            {sshOk && <Item ok={chk!.systemd}>{chk!.systemd ? t('systemd есть') : t('systemd не найден')}</Item>}
+            {sshOk && <Item ok={chk!.agentInstalled}>{chk!.agentInstalled ? t('Агент установлен ({v})', { v: chk!.agentVersion }) : t('Агент ещё не установлен')}</Item>}
           </div>
           <div className="row mt16">
-            <Button variant="primary" icon={<Download size={16} />} disabled={!canInstall} loading={installing} onClick={onInstall}>{chk?.agentInstalled ? 'Переустановить агент' : 'Установить агент'}</Button>
-            <Button icon={<RefreshCw size={15} />} loading={checking} onClick={check}>Проверить снова</Button>
-            <Button variant="ghost" icon={<Pencil size={15} />} onClick={onEdit}>Изменить подключение</Button>
+            <Button variant="primary" icon={<Download size={16} />} disabled={!canInstall} loading={installing} onClick={onInstall}>{chk?.agentInstalled ? t('Переустановить агент') : t('Установить агент')}</Button>
+            <Button icon={<RefreshCw size={15} />} loading={checking} onClick={check}>{t('Проверить снова')}</Button>
+            <Button variant="ghost" icon={<Pencil size={15} />} onClick={onEdit}>{t('Изменить подключение')}</Button>
           </div>
         </div>
       </div>
@@ -162,7 +162,7 @@ function InstallPanel({ id, status, onInstall, installing, onEdit, onRetry }: {
   )
 }
 
-const sourceIcon = (t: string) => t === 'mysql' || t === 'postgres' ? <Database size={14} /> : t === 'configs' ? <Settings2 size={14} /> : <FolderTree size={14} />
+const sourceIcon = (type: string) => type === 'mysql' || type === 'postgres' ? <Database size={14} /> : type === 'configs' ? <Settings2 size={14} /> : type === 'site' ? <Globe size={14} /> : <FolderTree size={14} />
 
 function JobsTab({ id, st, onEdit, refresh }: { id: string; st: ServerStatus; onEdit: (j: JobView | 'new') => void; refresh: () => Promise<void> }) {
   const { state } = useApp()
@@ -171,15 +171,15 @@ function JobsTab({ id, st, onEdit, refresh }: { id: string; st: ServerStatus; on
   if (!jobs.length) {
     return (
       <div className="card">
-        <Empty icon={<Archive size={26} />} title="Задач пока нет" action={<Button variant="primary" icon={<Plus size={16} />} onClick={() => onEdit('new')}>Создать задачу</Button>}>
-          Задача — это набор источников (базы, файлы сайта, конфиги), расписание и облака, куда выгружать.
-          {!state.storages.length && <div className="mt8" style={{ color: 'var(--warning)' }}>Сначала подключите облако в разделе «Облака».</div>}
+        <Empty icon={<Archive size={26} />} title={t('Задач пока нет')} action={<Button variant="primary" icon={<Plus size={16} />} onClick={() => onEdit('new')}>{t('Создать задачу')}</Button>}>
+          {t('Задача — это набор источников (базы, файлы сайта, конфиги), расписание и облака, куда выгружать.')}
+          {!state.storages.length && <div className="mt8" style={{ color: 'var(--warning)' }}>{t('Сначала подключите облако в разделе «Облака».')}</div>}
         </Empty>
       </div>
     )
   }
   const del = async (j: JobView) => {
-    if (!await confirm(<>Удалить задачу <b>{j.name}</b>? Уже сделанные копии в облаке останутся.</>, 'Удалить', true)) return
+    if (!await confirm(t('Удалить задачу «{name}»? Уже сделанные копии в облаке останутся.', { name: j.name }), t('Удалить'), true)) return
     await run('d' + j.id, async () => { await api.deleteJob(id, j.id); await refresh() })
   }
   return (
@@ -192,26 +192,26 @@ function JobsTab({ id, st, onEdit, refresh }: { id: string; st: ServerStatus; on
             <div className="grow">
               <div className="row" style={{ gap: 8 }}>
                 <span style={{ fontWeight: 600, fontSize: 15 }}>{j.name}</span>
-                {j.encrypt && <span className="badge" title="Архивы шифруются"><Lock size={11} /> шифр.</span>}
+                {j.encrypt && <span className="badge" title={t('Архивы шифруются')}><Lock size={11} /> {t('шифр.')}</span>}
                 {j.cronError && <span className="badge danger">{j.cronError}</span>}
               </div>
               <div className="row wrap mt8" style={{ gap: 6 }}>
-                {j.sources.map(s => <span key={s.id} className="chip">{sourceIcon(s.type)} {sourceLabels[s.type]}{s.type === 'files' && s.paths?.[0] ? `: ${s.paths[0]}${s.paths.length > 1 ? ' …' : ''}` : ''}</span>)}
+                {j.sources.map(s => <span key={s.id} className="chip">{sourceIcon(s.type)} {t(sourceLabels[s.type])}{s.type === 'files' && s.paths?.[0] ? `: ${s.paths[0]}${s.paths.length > 1 ? ' …' : ''}` : ''}{s.type === 'site' && s.site?.url ? `: ${s.site.url.replace(/^https?:\/\//, '')}` : ''}</span>)}
                 <span className="chip">→ {j.storages.map(sid => state.storages.find(s => s.id === sid)?.name || '?').join(', ')}</span>
               </div>
               <div className="row small muted mt8" style={{ gap: 16 }}>
                 <span className="row" style={{ gap: 5 }}><Clock size={13} /> {scheduleText(j.schedule)}</span>
-                {j.nextRun && <span>следующий {relative(j.nextRun)}</span>}
-                <span>хранить {j.keep || '∞'}</span>
+                {j.nextRun && <span>{t('следующий {when}', { when: relative(j.nextRun) })}</span>}
+                <span>{t('хранить {n}', { n: j.keep || '∞' })}</span>
               </div>
             </div>
             <div style={{ textAlign: 'right', minWidth: 150 }}>
-              {j.lastRun ? <><StatusBadge status={j.lastRun.status} /><div className="small faint mt8">{dateTime(j.lastRun.startedAt)} · {bytes(j.lastRun.bytes)}</div></> : <span className="small faint">ещё не запускалась</span>}
+              {j.lastRun ? <><StatusBadge status={j.lastRun.status} /><div className="small faint mt8">{dateTime(j.lastRun.startedAt)} · {bytes(j.lastRun.bytes)}</div></> : <span className="small faint">{t('ещё не запускалась')}</span>}
             </div>
             <div className="row" style={{ gap: 6 }}>
-              <Button icon={<Play size={14} />} disabled={!!activeRun} loading={busy === 'r' + j.id} onClick={() => run('r' + j.id, async () => { await api.runJob(id, j.id); await refresh() }, 'Задача поставлена в очередь')}>{activeRun ? 'Идёт' : 'Запустить'}</Button>
-              <Button icon={<Pencil size={14} />} onClick={() => onEdit(j)} title="Изменить" />
-              <Button icon={<Trash2 size={14} />} variant="danger" loading={busy === 'd' + j.id} onClick={() => del(j)} title="Удалить" />
+              <Button icon={<Play size={14} />} disabled={!!activeRun} loading={busy === 'r' + j.id} onClick={() => run('r' + j.id, async () => { await api.runJob(id, j.id); await refresh() }, t('Задача поставлена в очередь'))}>{activeRun ? t('Идёт') : t('Запустить')}</Button>
+              <Button icon={<Pencil size={14} />} onClick={() => onEdit(j)} title={t('Изменить')} />
+              <Button icon={<Trash2 size={14} />} variant="danger" loading={busy === 'd' + j.id} onClick={() => del(j)} title={t('Удалить')} />
             </div>
           </div>
         )
@@ -230,19 +230,19 @@ function HistoryTab({ id, jobs }: { id: string; jobs: JobView[] }) {
     <>
       <div className="row" style={{ marginBottom: 12 }}>
         <select className="select" style={{ width: 260 }} value={jobId} onChange={e => setJobId(e.target.value)}>
-          <option value="">Все задачи</option>
+          <option value="">{t('Все задачи')}</option>
           {jobs.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
         </select>
       </div>
       <div className="card">
-        {!runs ? <div className="card-pad"><Bar value={0} indeterminate /></div> : runs.length === 0 ? <div className="empty small">Запусков пока не было</div> : (
+        {!runs ? <div className="card-pad"><Bar value={0} indeterminate /></div> : runs.length === 0 ? <div className="empty small">{t('Запусков пока не было')}</div> : (
           <table className="table">
-            <thead><tr><th>Задача</th><th>Запуск</th><th>Начало</th><th>Длительность</th><th>Данные → архив</th><th>Статус</th></tr></thead>
+            <thead><tr><th>{t('Задача')}</th><th>{t('Запуск')}</th><th>{t('Начало')}</th><th>{t('Длительность')}</th><th>{t('Данные → архив')}</th><th>{t('Статус')}</th></tr></thead>
             <tbody>
               {runs.map(r => (
                 <tr key={r.id} className="click" onClick={() => show(r)}>
                   <td style={{ fontWeight: 550 }}>{r.jobName}</td>
-                  <td className="muted">{r.trigger}</td>
+                  <td className="muted">{t(r.trigger)}</td>
                   <td className="muted">{dateTime(r.startedAt || r.queuedAt)}</td>
                   <td className="muted">{duration(r.startedAt, r.finishedAt)}</td>
                   <td className="muted">{bytes(r.rawBytes)} → {bytes(r.bytes)}</td>
@@ -264,15 +264,15 @@ function RunDetails({ run, onClose }: { run: Run; onClose: () => void }) {
     <Modal wide title={<>{run.jobName} <span className="faint" style={{ fontWeight: 400, fontSize: 14 }}>· {dateTime(run.startedAt)}</span></>} onClose={onClose}>
       <div className="row wrap" style={{ gap: 18 }}>
         <StatusBadge status={run.status} />
-        <span className="small muted">Длительность: <b>{duration(run.startedAt, run.finishedAt)}</b></span>
-        <span className="small muted">Данные: <b>{bytes(run.rawBytes)}</b> → архив <b>{bytes(run.bytes)}</b></span>
-        {run.chunkSize > 0 && <span className="small muted">Кусок: <b>{bytes(run.chunkSize)}</b> ({run.chunkBuffer === 'disk' ? 'буфер на диске' : 'буфер в памяти'})</span>}
+        <span className="small muted">{t('Длительность:')} <b>{duration(run.startedAt, run.finishedAt)}</b></span>
+        <span className="small muted">{t('Данные:')} <b>{bytes(run.rawBytes)}</b> → {t('архив')} <b>{bytes(run.bytes)}</b></span>
+        {run.chunkSize > 0 && <span className="small muted">{t('Кусок:')} <b>{bytes(run.chunkSize)}</b> ({run.chunkBuffer === 'disk' ? t('буфер на диске') : t('буфер в памяти')})</span>}
       </div>
       {run.error && <div className="mt12"><Alert tone="danger"><span className="selectable">{run.error}</span></Alert></div>}
       {run.files?.length > 0 && (
         <div className="card mt16">
           <table className="table">
-            <thead><tr><th>Файл</th><th>Данные</th><th>Архив</th><th>Частей</th><th /></tr></thead>
+            <thead><tr><th>{t('Файл')}</th><th>{t('Данные')}</th><th>{t('Архив')}</th><th>{t('Частей')}</th><th /></tr></thead>
             <tbody>
               {run.files.map(f => (
                 <tr key={f.name}>
@@ -280,18 +280,18 @@ function RunDetails({ run, onClose }: { run: Run; onClose: () => void }) {
                   <td className="muted">{bytes(f.rawSize)}</td>
                   <td className="muted">{bytes(f.size)}</td>
                   <td className="muted">{f.parts?.length || 0}</td>
-                  <td>{f.error ? <span className="badge danger" title={f.error}>ошибка</span> : <span className="badge success">ok</span>}</td>
+                  <td>{f.error ? <span className="badge danger" title={f.error}>{t('ошибка')}</span> : <span className="badge success">ok</span>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      {run.remoteDir && <div className="small faint mt12">Папка в облаке: <span className="mono selectable">{run.remoteDir}</span> ({run.storages?.map(id => state.storages.find(s => s.id === id)?.name || id).join(', ')})</div>}
-      <div className="section-title">Журнал</div>
+      {run.remoteDir && <div className="small faint mt12">{t('Папка в облаке:')} <span className="mono selectable">{run.remoteDir}</span> ({run.storages?.map(id => state.storages.find(s => s.id === id)?.name || id).join(', ')})</div>}
+      <div className="section-title">{t('Журнал')}</div>
       <div className="log">
         {(run.log || []).map((l, i) => (
-          <div key={i} className={l.level}><span className="t">{new Date(l.time).toLocaleTimeString('ru-RU')}</span>{l.msg}</div>
+          <div key={i} className={l.level}><span className="t">{new Date(l.time).toLocaleTimeString(locale())}</span>{l.msg}</div>
         ))}
       </div>
     </Modal>
@@ -319,15 +319,15 @@ function BackupsTab({ id, jobs }: { id: string; jobs: JobView[] }) {
   useEffect(() => { load() }, [jobId, storageId])
   useEffect(() => onEvent('download', d => setDl(p => ({ ...p, [d.key]: d }))), [])
 
-  if (!jobs.length) return <div className="card"><div className="empty">Нет задач — нет и копий</div></div>
+  if (!jobs.length) return <div className="card"><div className="empty">{t('Нет задач — нет и копий')}</div></div>
 
   const download = (b: BackupEntry, f: BackupEntry['files'][0]) => run('dl' + b.dir + f.name, async () => {
     const path = await api.download(id, storageId, b.dir, f.name, decrypt && f.encrypted, f.size)
-    if (path) toast('success', `Сохранено: ${path}`)
+    if (path) toast('success', t('Сохранено: {path}', { path }))
   })
   const remove = async (b: BackupEntry) => {
-    if (!await confirm(<>Удалить копию от <b>{dateTime(b.started)}</b> из облака? Это необратимо.</>, 'Удалить', true)) return
-    await run('rm' + b.dir, async () => { await api.deleteBackup(id, storageId, b.dir); await load() }, 'Копия удалена')
+    if (!await confirm(t('Удалить копию от {date} из облака? Это необратимо.', { date: dateTime(b.started) }), t('Удалить'), true)) return
+    await run('rm' + b.dir, async () => { await api.deleteBackup(id, storageId, b.dir); await load() }, t('Копия удалена'))
   }
 
   return (
@@ -341,14 +341,14 @@ function BackupsTab({ id, jobs }: { id: string; jobs: JobView[] }) {
         </select>
         <Button icon={<RefreshCw size={15} />} onClick={load} />
         <span className="grow" />
-        {job?.encrypt && <label className="check small"><input type="checkbox" checked={decrypt} onChange={e => setDecrypt(e.target.checked)} /> Расшифровывать при скачивании</label>}
+        {job?.encrypt && <label className="check small"><input type="checkbox" checked={decrypt} onChange={e => setDecrypt(e.target.checked)} /> {t('Расшифровывать при скачивании')}</label>}
       </div>
       {error && <Alert tone="danger">{error}</Alert>}
       <div className="card">
-        {!list ? <div className="card-pad"><Bar value={0} indeterminate /><div className="small muted mt8">Читаем список копий из облака…</div></div>
-          : list.length === 0 ? <div className="empty small">В этом облаке копий задачи пока нет</div> : (
+        {!list ? <div className="card-pad"><Bar value={0} indeterminate /><div className="small muted mt8">{t('Читаем список копий из облака…')}</div></div>
+          : list.length === 0 ? <div className="empty small">{t('В этом облаке копий задачи пока нет')}</div> : (
             <table className="table">
-              <thead><tr><th>Дата</th><th>Файлов</th><th>Размер</th><th>Статус</th><th /></tr></thead>
+              <thead><tr><th>{t('Дата')}</th><th>{t('Файлов')}</th><th>{t('Размер')}</th><th>{t('Статус')}</th><th /></tr></thead>
               <tbody>
                 {list.map(b => (
                   <Fragment key={b.dir}>
@@ -358,7 +358,7 @@ function BackupsTab({ id, jobs }: { id: string; jobs: JobView[] }) {
                       <td className="muted">{bytes(b.size)}</td>
                       <td><StatusBadge status={b.status} /></td>
                       <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
-                        <Button size="sm" variant="danger" icon={<Trash2 size={13} />} loading={busy === 'rm' + b.dir} onClick={() => remove(b)} title="Удалить копию" />
+                        <Button size="sm" variant="danger" icon={<Trash2 size={13} />} loading={busy === 'rm' + b.dir} onClick={() => remove(b)} title={t('Удалить копию')} />
                       </td>
                     </tr>
                     {open === b.dir && (b.files || []).map(f => {
@@ -366,11 +366,11 @@ function BackupsTab({ id, jobs }: { id: string; jobs: JobView[] }) {
                       const loading = busy === 'dl' + b.dir + f.name
                       return (
                         <tr key={b.dir + f.name}>
-                          <td colSpan={2} style={{ paddingLeft: 28 }}><span className="mono">{f.name}</span>{f.error && <span className="badge danger" style={{ marginLeft: 8 }}>ошибка</span>}</td>
-                          <td className="muted">{bytes(f.size)} <span className="faint">({f.parts?.length} ч.)</span></td>
+                          <td colSpan={2} style={{ paddingLeft: 28 }}><span className="mono">{f.name}</span>{f.error && <span className="badge danger" style={{ marginLeft: 8 }}>{t('ошибка')}</span>}</td>
+                          <td className="muted">{bytes(f.size)} <span className="faint">({t('{n} ч.', { n: f.parts?.length || 0 })})</span></td>
                           <td>{loading && p && p.total > 0 && <Bar value={p.done / p.total} />}{loading && p && <div className="small faint">{bytes(p.done)}</div>}</td>
                           <td style={{ textAlign: 'right' }}>
-                            {!f.error && <Button size="sm" icon={<Download size={13} />} loading={loading} onClick={() => download(b, f)}>Скачать</Button>}
+                            {!f.error && <Button size="sm" icon={<Download size={13} />} loading={loading} onClick={() => download(b, f)}>{t('Скачать')}</Button>}
                           </td>
                         </tr>
                       )
@@ -381,7 +381,7 @@ function BackupsTab({ id, jobs }: { id: string; jobs: JobView[] }) {
             </table>
           )}
       </div>
-      <div className="small faint mt12 row"><FolderOpen size={13} /> Куски склеиваются и (при необходимости) расшифровываются на сервере и передаются на ПК по SSH-туннелю.</div>
+      <div className="small faint mt12 row"><FolderOpen size={13} /> {t('Куски склеиваются и (при необходимости) расшифровываются на сервере и передаются на ПК по SSH-туннелю.')}</div>
     </>
   )
 }
@@ -389,47 +389,47 @@ function BackupsTab({ id, jobs }: { id: string; jobs: JobView[] }) {
 function SystemTab({ st }: { st: ServerStatus }) {
   const s = st.info!.sys
   const tools = ['mysqldump', 'pg_dump', 'pg_dumpall', 'tar', 'sudo', 'runuser']
-  const up = s.uptime > 86400 ? `${Math.floor(s.uptime / 86400)} дн` : `${Math.floor(s.uptime / 3600)} ч`
+  const up = s.uptime > 86400 ? t('{n} дн', { n: Math.floor(s.uptime / 86400) }) : t('{n} ч', { n: Math.floor(s.uptime / 3600) })
   return (
     <div className="grid g2">
       <div className="card card-pad">
-        <div className="card-title">Система</div>
+        <div className="card-title">{t('Система')}</div>
         <div className="kv mt12">
-          <span className="k">Хост</span><span>{s.hostname}</span>
-          <span className="k">ОС</span><span>{s.os}</span>
-          <span className="k">Ядро</span><span>{s.kernel} ({s.arch})</span>
-          <span className="k">CPU</span><span>{s.cpus} ядер, загрузка {s.load1.toFixed(2)}</span>
-          <span className="k">Аптайм</span><span>{up}</span>
-          <span className="k">Часовой пояс</span><span>{s.tz} (UTC{s.tzOffset >= 0 ? '+' : ''}{s.tzOffset / 3600})</span>
-          <span className="k">Агент</span><span>{st.info!.version}</span>
+          <span className="k">{t('Хост')}</span><span>{s.hostname}</span>
+          <span className="k">{t('ОС')}</span><span>{s.os}</span>
+          <span className="k">{t('Ядро')}</span><span>{s.kernel} ({s.arch})</span>
+          <span className="k">CPU</span><span>{t('{n} ядер, загрузка {load}', { n: s.cpus, load: s.load1.toFixed(2) })}</span>
+          <span className="k">{t('Аптайм')}</span><span>{up}</span>
+          <span className="k">{t('Часовой пояс')}</span><span>{s.tz} (UTC{s.tzOffset >= 0 ? '+' : ''}{s.tzOffset / 3600})</span>
+          <span className="k">{t('Агент')}</span><span>{st.info!.version}</span>
         </div>
       </div>
       <div className="card card-pad">
-        <div className="card-title">Ресурсы для бэкапа</div>
+        <div className="card-title">{t('Ресурсы для бэкапа')}</div>
         <div className="col mt12" style={{ gap: 14 }}>
           <div>
-            <div className="row small"><span className="grow muted">Память свободно</span><b>{bytes(s.memAvailable)}</b><span className="faint">из {bytes(s.memTotal)}</span></div>
+            <div className="row small"><span className="grow muted">{t('Память свободно')}</span><b>{bytes(s.memAvailable)}</b><span className="faint">{t('из {total}', { total: bytes(s.memTotal) })}</span></div>
             <div className="mt8"><Bar value={1 - s.memAvailable / s.memTotal} warn={s.memAvailable / s.memTotal < .15} /></div>
           </div>
           {s.swapTotal > 0 && <div>
-            <div className="row small"><span className="grow muted">Swap свободно</span><b>{bytes(s.swapFree)}</b><span className="faint">из {bytes(s.swapTotal)}</span></div>
+            <div className="row small"><span className="grow muted">{t('Swap свободно')}</span><b>{bytes(s.swapFree)}</b><span className="faint">{t('из {total}', { total: bytes(s.swapTotal) })}</span></div>
             <div className="mt8"><Bar value={1 - s.swapFree / s.swapTotal} /></div>
           </div>}
           <div>
-            <div className="row small"><span className="grow muted">Диск ({s.tmpDir}) свободно</span><b>{bytes(s.diskFree)}</b><span className="faint">из {bytes(s.diskTotal)}</span></div>
+            <div className="row small"><span className="grow muted">{t('Диск ({dir}) свободно', { dir: s.tmpDir })}</span><b>{bytes(s.diskFree)}</b><span className="faint">{t('из {total}', { total: bytes(s.diskTotal) })}</span></div>
             <div className="mt8"><Bar value={1 - s.diskFree / s.diskTotal} warn={s.diskFree / s.diskTotal < .1} /></div>
           </div>
           <div className="row wrap" style={{ gap: 6 }}>
-            {tools.map(t => <span key={t} className={cls('badge', s.tools[t] ? 'success' : '')}>{s.tools[t] ? '✓' : '—'} {t}</span>)}
+            {tools.map(tool => <span key={tool} className={cls('badge', s.tools[tool] ? 'success' : '')}>{s.tools[tool] ? '✓' : '—'} {tool}</span>)}
           </div>
-          <div className="small faint">Агент работает с пониженным приоритетом (nice 10 и низкий приоритет ввода-вывода), чтобы бэкап не тормозил сайты.</div>
+          <div className="small faint">{t('Агент работает с пониженным приоритетом (nice 10 и низкий приоритет ввода-вывода), чтобы бэкап не тормозил сайты.')}</div>
         </div>
       </div>
       <div className="card card-pad" style={{ gridColumn: 'span 2' }}>
-        <div className="card-title">Облака на агенте</div>
+        <div className="card-title">{t('Облака на агенте')}</div>
         <div className="row wrap mt12" style={{ gap: 8 }}>
-          {st.info!.storages.map(c => <span key={c.id} className="chip">{c.name} · {kindLabels[c.kind]} · {c.root}</span>)}
-          {!st.info!.storages.length && <span className="small faint">Нет — добавьте облако в разделе «Облака», оно синхронизируется автоматически.</span>}
+          {st.info!.storages.map(c => <span key={c.id} className="chip">{c.name} · {t(kindLabels[c.kind])} · {c.root}</span>)}
+          {!st.info!.storages.length && <span className="small faint">{t('Нет — добавьте облако в разделе «Облака», оно синхронизируется автоматически.')}</span>}
         </div>
       </div>
     </div>
