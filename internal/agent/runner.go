@@ -177,6 +177,9 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 	if len(job.Sources) == 0 {
 		return model.RunFailed, "в задаче нет источников"
 	}
+	if err := needsEncryption(job, cfg.Storages); err != nil {
+		return model.RunFailed, err.Error()
+	}
 	started := time.Now()
 	runDir := path.Join(a.jobDir(job), started.Format(runDirLayout))
 	dests, err := a.openDests(job, runDir)
@@ -315,6 +318,10 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 
 	if pol := job.Policy(); status != model.RunFailed && !pol.Empty() {
 		for _, d := range dests {
+			if why := rotationBlocked(d); why != "" {
+				a.logf(run, "warn", "Ротация в %s пропущена: %s", a.storageName(d.id), why)
+				continue
+			}
 			a.rotate(ctx, run, d, pol, false)
 		}
 	}
@@ -332,6 +339,15 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 		return status, strings.Join(errs, "; ")
 	}
 	return status, ""
+}
+
+// rotationBlocked is the reason a storage cannot delete old copies (Telegram
+// may refuse to delete messages older than 48 hours).
+func rotationBlocked(d dest) string {
+	if rb, ok := d.st.(interface{ RotationBlocked() string }); ok {
+		return rb.RotationBlocked()
+	}
+	return ""
 }
 
 func (a *Agent) storageName(id string) string {

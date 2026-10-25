@@ -65,9 +65,16 @@ type State struct {
 
 func (a *App) GetState() State {
 	cfg := a.store.Get()
-	st := State{Version: version.Version, Storages: cfg.Storages, Settings: cfg.Settings, Keys: desktop.DefaultKeys()}
-	if st.Storages == nil {
-		st.Storages = []model.Storage{}
+	st := State{Version: version.Version, Settings: cfg.Settings, Keys: desktop.DefaultKeys()}
+	st.Storages = []model.Storage{}
+	for _, s := range cfg.Storages {
+		if s.TgServer != nil {
+			// The relay key stays in the panel; SaveStorage keeps it.
+			ts := *s.TgServer
+			ts.Key = ""
+			s.TgServer = &ts
+		}
+		st.Storages = append(st.Storages, s)
 	}
 	for _, s := range cfg.Servers {
 		v := ServerView{Server: s, HasToken: s.Token != "", Fingerprint: desktop.Fingerprint(s.HostKey)}
@@ -368,10 +375,55 @@ func (a *App) RevealFile(path string) {
 
 // ---- clouds ----
 
+// withSaved fills secrets the form leaves blank from the saved copy of the storage.
+func (a *App) withSaved(s model.Storage) model.Storage {
+	if s.ID == "" {
+		return s
+	}
+	for _, old := range a.store.Get().Storages {
+		if old.ID != s.ID {
+			continue
+		}
+		if s.Password == "" {
+			s.Password = old.Password
+		}
+		if s.Token == "" {
+			s.Token = old.Token
+		}
+		if s.TgServer != nil && old.TgServer != nil {
+			ts, o := *s.TgServer, old.TgServer
+			if ts.Key == "" {
+				ts.Key = o.Key
+			}
+			if ts.AdminPassphrase == "" {
+				ts.AdminPassphrase = o.AdminPassphrase
+			}
+			if ts.APIHash == "" {
+				ts.APIHash = o.APIHash
+			}
+			if ts.Host == o.Host && ts.HostKey == "" {
+				ts.HostKey = o.HostKey
+			}
+			s.TgServer = &ts
+		}
+	}
+	return s
+}
+
 func (a *App) SaveStorage(s model.Storage) (string, error) {
 	s.Name = strings.TrimSpace(s.Name)
 	if s.Name == "" {
 		return "", errors.New("укажите название")
+	}
+	s = a.withSaved(s)
+	if s.Kind == model.StorageTelegram {
+		s.ChatID = strings.TrimSpace(s.ChatID)
+		if s.ChatID == "" {
+			return "", errors.New("укажите канал Telegram")
+		}
+		if s.TgServer == nil || s.TgServer.Key == "" {
+			return "", errors.New("сначала установите Bot API на сервер")
+		}
 	}
 	if strings.TrimSpace(s.Root) == "" {
 		s.Root = "/Backupper"
@@ -383,12 +435,6 @@ func (a *App) SaveStorage(s model.Storage) (string, error) {
 	err := a.store.Update(func(c *desktop.Config) error {
 		for i := range c.Storages {
 			if c.Storages[i].ID == s.ID {
-				if s.Password == "" {
-					s.Password = c.Storages[i].Password
-				}
-				if s.Token == "" {
-					s.Token = c.Storages[i].Token
-				}
 				c.Storages[i] = s
 				return nil
 			}
@@ -422,22 +468,81 @@ func (a *App) DeleteStorage(id string) error {
 // TestStorage checks credentials from this PC (the unsaved form values are used,
 // falling back to saved secrets when the fields were left blank).
 func (a *App) TestStorage(s model.Storage) model.StorageTest {
-	for _, old := range a.store.Get().Storages {
-		if old.ID == s.ID && s.ID != "" {
-			if s.Password == "" {
-				s.Password = old.Password
-			}
-			if s.Token == "" {
-				s.Token = old.Token
-			}
-		}
-	}
+	s = a.withSaved(s)
 	if strings.TrimSpace(s.Root) == "" {
 		s.Root = "/Backupper"
 	}
 	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Minute)
 	defer cancel()
 	return storage.Test(ctx, s, 0)
+}
+
+// ---- Telegram Bot API server ----
+
+// CheckTelegramServer looks at a server for the Bot API (read-only).
+func (a *App) CheckTelegramServer(s model.Storage) desktop.TgServerCheck {
+	s = a.withSaved(s)
+	return desktop.CheckTelegramServer(s.TgServer)
+}
+
+type TgInstallResult struct {
+	OK      bool          `json:"ok"`
+	Error   string        `json:"error,omitempty"`
+	Log     string        `json:"log"`
+	Storage model.Storage `json:"storage"`
+}
+
+// InstallTelegramServer installs the Bot API and saves the storage with the
+// relay key, so agents get it with the next sync.
+func (a *App) InstallTelegramServer(s model.Storage) TgInstallResult {
+	s = a.withSaved(s)
+	if s.Token != "" && s.Token == a.store.Get().Settings.Telegram.BotToken {
+		return TgInstallResult{Error: "этот бот уже шлёт уведомления через облачный Bot API — после переноса на свой сервер они перестанут работать. Создайте для хранения отдельного бота"}
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Minute)
+	defer cancel()
+	s.Kind = model.StorageTelegram
+	out, log, err := desktop.InstallTelegramServer(ctx, s)
+	res := TgInstallResult{Log: log}
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	if out.ID == "" {
+		out.ID = newID()
+	}
+	if strings.TrimSpace(out.Root) == "" {
+		out.Root = "/Backupper"
+	}
+	if strings.TrimSpace(out.Name) == "" {
+		out.Name = "Telegram"
+	}
+	err = a.store.Update(func(c *desktop.Config) error {
+		for i := range c.Storages {
+			if c.Storages[i].ID == out.ID {
+				c.Storages[i] = out
+				return nil
+			}
+		}
+		c.Storages = append(c.Storages, out)
+		return nil
+	})
+	if err != nil {
+		res.Error = err.Error()
+		return res
+	}
+	a.mgr.Resync()
+	out.TgServer.Key = ""
+	res.OK, res.Storage = true, out
+	return res
+}
+
+// TelegramChats lists chats where the bot was added, to pick the channel.
+func (a *App) TelegramChats(s model.Storage) ([]storage.TelegramChat, error) {
+	s = a.withSaved(s)
+	ctx, cancel := context.WithTimeout(a.ctx, time.Minute)
+	defer cancel()
+	return storage.TelegramChats(ctx, s)
 }
 
 // ---- settings ----

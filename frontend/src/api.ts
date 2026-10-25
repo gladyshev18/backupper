@@ -2,7 +2,7 @@
 import * as G from '../wailsjs/go/main/App'
 import type {
   AppState, BackupEntry, ChunkPlan, CMSPreset, Job, ProbeResult, Retention, RetentionPreview, Run, Schedule, Server,
-  ServerCheck, ServerStatus, Settings, Source, Storage, StorageTest,
+  ServerCheck, ServerStatus, Settings, Source, Storage, StorageTest, TelegramChat, TgInstallResult, TgServerCheck,
 } from './types'
 
 const g = G as any
@@ -38,6 +38,9 @@ export const api = {
   saveStorage: (s: Storage): Promise<string> => g.SaveStorage(s),
   deleteStorage: (id: string): Promise<void> => g.DeleteStorage(id),
   testStorage: (s: Storage): Promise<StorageTest> => g.TestStorage(s),
+  checkTelegramServer: (s: Storage): Promise<TgServerCheck> => g.CheckTelegramServer(s),
+  installTelegramServer: (s: Storage): Promise<TgInstallResult> => g.InstallTelegramServer(s),
+  telegramChats: (s: Storage): Promise<TelegramChat[]> => g.TelegramChats(s),
 
   saveSettings: (s: Settings): Promise<Record<string, string>> => g.SaveSettings(s),
   testTelegram: (t: Settings['telegram']): Promise<void> => g.TestTelegram(t),

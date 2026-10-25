@@ -287,7 +287,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .mem-viz { margin-top: 12px; }
 .mem-viz .bar { height: 10px; }
 
-.kind-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.kind-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
 .kind-tile { border: 1px solid var(--border-strong); border-radius: 12px; padding: 14px; cursor: pointer; background: var(--surface); text-align: left; display: flex; flex-direction: column; gap: 8px; }
 .kind-tile:hover { border-color: var(--accent); }
 .kind-tile.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -295,6 +295,8 @@ input[type=range] { width: 100%; accent-color: var(--accent); }
 .kind-logo.yandex { background: linear-gradient(135deg, #ffcc00, #ff9900); color: #222; }
 .kind-logo.mailru { background: linear-gradient(135deg, #168de2, #005ff9); }
 .kind-logo.webdav { background: linear-gradient(135deg, #64748b, #334155); }
+.tg-step { display: flex; align-items: center; gap: 7px; font-weight: 600; padding-top: 12px; border-top: 1px solid var(--border); }
+.kind-logo.telegram { background: linear-gradient(135deg, #37aee2, #1e96c8); }
 
 .steps { counter-reset: s; display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .steps li { counter-increment: s; display: flex; gap: 10px; font-size: 13px; color: var(--text-2); }

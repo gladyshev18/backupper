@@ -4,6 +4,7 @@ import {model} from '../models';
 import {cms} from '../models';
 import {desktop} from '../models';
 import {main} from '../models';
+import {storage} from '../models';
 
 export function Active(arg1:string):Promise<Array<model.Run>>;
 
@@ -14,6 +15,8 @@ export function CMSPresets():Promise<Array<cms.Preset>>;
 export function CancelRun(arg1:string,arg2:string):Promise<void>;
 
 export function CheckServer(arg1:string):Promise<desktop.ServerCheck>;
+
+export function CheckTelegramServer(arg1:model.Storage):Promise<desktop.TgServerCheck>;
 
 export function DeleteBackup(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -28,6 +31,8 @@ export function DownloadBackup(arg1:string,arg2:string,arg3:string,arg4:string,a
 export function GetState():Promise<main.State>;
 
 export function InstallAgent(arg1:string):Promise<string>;
+
+export function InstallTelegramServer(arg1:model.Storage):Promise<main.TgInstallResult>;
 
 export function NextRuns(arg1:model.Schedule,arg2:number,arg3:number):Promise<Array<string>>;
 
@@ -64,6 +69,8 @@ export function SaveStorage(arg1:model.Storage):Promise<string>;
 export function ServerStatus(arg1:string):Promise<main.ServerStatus>;
 
 export function SpeedTest(arg1:string,arg2:string):Promise<model.StorageTest>;
+
+export function TelegramChats(arg1:model.Storage):Promise<Array<storage.TelegramChat>>;
 
 export function TestStorage(arg1:model.Storage):Promise<model.StorageTest>;
 

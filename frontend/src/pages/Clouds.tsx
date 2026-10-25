@@ -1,15 +1,17 @@
 import { useState } from 'react'
-import { Cloud, ExternalLink, Pencil, Plug, Plus, Trash2 } from 'lucide-react'
+import { Cloud, ExternalLink, Pencil, Plug, Plus, Send, Trash2 } from 'lucide-react'
 import { useApp } from '../App'
 import { api } from '../api'
 import type { Storage, StorageKind, StorageTest } from '../types'
 import { Alert, Bar, Button, Empty, Field, Modal, Seg, useUI } from '../components/ui'
 import { bytes, cls, kindLabels } from '../util'
 import { t } from '../i18n'
+import TelegramFields from './TelegramFields'
 
 function KindLogo({ kind }: { kind: StorageKind }) {
   if (kind === 'yandex' || kind === 'yandex_webdav') return <div className="kind-logo yandex">Я</div>
   if (kind === 'mailru') return <div className="kind-logo mailru">@</div>
+  if (kind === 'telegram') return <div className="kind-logo telegram"><Send size={17} /></div>
   return <div className="kind-logo webdav"><Cloud size={18} /></div>
 }
 
@@ -35,7 +37,7 @@ export default function Clouds() {
       {state.storages.length === 0 ? (
         <div className="card">
           <Empty icon={<Cloud size={26} />} title={t('Облака не подключены')} action={<Button variant="primary" icon={<Plus size={16} />} onClick={() => setEdit('new')}>{t('Подключить облако')}</Button>}>
-            {t('Поддерживаются Яндекс Диск, Облако Mail.ru и любой WebDAV-сервер.')}
+            {t('Поддерживаются Яндекс Диск, Облако Mail.ru, любой WebDAV-сервер и Telegram через свой сервер Bot API.')}
           </Empty>
         </div>
       ) : (
@@ -49,7 +51,9 @@ export default function Clouds() {
                   <div className="small faint">{t(kindLabels[s.kind])}</div>
                 </div>
               </div>
-              <div className="small muted mt12">{t('Папка:')} <span className="mono">{s.root}</span>{s.login && <> · {s.login}</>}</div>
+              {s.kind === 'telegram'
+                ? <div className="small muted mt12">{t('Канал:')} <span className="mono">{s.chatId || '—'}</span>{s.tgServer?.host && <> · Bot API {s.tgServer.host}</>}</div>
+                : <div className="small muted mt12">{t('Папка:')} <span className="mono">{s.root}</span>{s.login && <> · {s.login}</>}</div>}
               <div className="row mt16" style={{ gap: 6 }}>
                 <Button size="sm" icon={<Pencil size={13} />} onClick={() => setEdit(s)}>{t('Изменить')}</Button>
                 <span className="grow" />
@@ -67,14 +71,24 @@ export default function Clouds() {
 function StorageForm({ storage, onClose }: { storage: Storage | null; onClose: () => void }) {
   const { state, reload } = useApp()
   const { run, busy } = useUI()
-  const [s, setS] = useState<Storage>(storage ? { ...storage, password: '', token: '' } : { id: '', name: t('Яндекс Диск'), kind: 'yandex', root: '/Backupper', login: '', password: '', token: '', url: '' })
+  const [s, setS] = useState<Storage>(storage
+    ? { ...storage, password: '', token: '', tgServer: storage.tgServer && { ...storage.tgServer, adminPassphrase: '', apiHash: '' } }
+    : { id: '', name: t('Яндекс Диск'), kind: 'yandex', root: '/Backupper', login: '', password: '', token: '', url: '' })
   const set = (p: Partial<Storage>) => setS(v => ({ ...v, ...p }))
   const [test, setTest] = useState<StorageTest | null>(null)
   const [clientId, setClientId] = useState(state.settings.yandexClientId || '')
   const family = s.kind === 'yandex_webdav' ? 'yandex' : s.kind
-  const kindName = (k: StorageKind) => k === 'mailru' ? t('Облако Mail.ru') : k === 'webdav' ? 'WebDAV' : t('Яндекс Диск')
-  const defaultNames = ['', 'Яндекс Диск', 'Облако Mail.ru', 'WebDAV', 'Yandex Disk', 'Mail.ru Cloud']
-  const pickKind = (k: StorageKind) => set({ kind: k, name: defaultNames.includes(s.name) ? kindName(k) : s.name })
+  const kindName = (k: StorageKind) => k === 'mailru' ? t('Облако Mail.ru') : k === 'webdav' ? 'WebDAV' : k === 'telegram' ? 'Telegram' : t('Яндекс Диск')
+  const defaultNames = ['', 'Яндекс Диск', 'Облако Mail.ru', 'WebDAV', 'Yandex Disk', 'Mail.ru Cloud', 'Telegram']
+  const pickKind = (k: StorageKind) => set({
+    kind: k, name: defaultNames.includes(s.name) ? kindName(k) : s.name,
+    tgServer: k === 'telegram' ? s.tgServer || { host: '', port: 22, adminUser: 'root' } : s.tgServer,
+  })
+  // After the Bot API install the storage is saved: later saves must update it.
+  const installed = (saved: Storage) => {
+    set({ id: saved.id, name: saved.name, tgServer: { ...s.tgServer!, ...saved.tgServer, adminPassphrase: '', apiHash: '' } })
+    reload()
+  }
 
   const doTest = () => run('test', async () => { setTest(null); setTest(await api.testStorage(s)) })
   const save = () => run('save', async () => {
@@ -95,7 +109,7 @@ function StorageForm({ storage, onClose }: { storage: Storage | null; onClose: (
       <Button variant="primary" loading={busy === 'save'} onClick={save}>{t('Сохранить')}</Button>
     </>}>
       <div className="kind-tiles">
-        {([['yandex', t('Быстрый REST API')], ['mailru', t('WebDAV, пароль приложения')], ['webdav', t('Nextcloud, свой сервер')]] as const).map(([k, d]) => (
+        {([['yandex', t('Быстрый REST API')], ['mailru', t('WebDAV, пароль приложения')], ['webdav', t('Nextcloud, свой сервер')], ['telegram', t('Канал, свой сервер Bot API')]] as const).map(([k, d]) => (
           <button key={k} className={cls('kind-tile', family === k && 'on')} onClick={() => pickKind(k)} disabled={!!storage && family !== k}>
             <KindLogo kind={k} />
             <div><div style={{ fontWeight: 600 }}>{kindName(k)}</div><div className="small faint">{d}</div></div>
@@ -105,8 +119,10 @@ function StorageForm({ storage, onClose }: { storage: Storage | null; onClose: (
 
       <div className="grid g2 mt16">
         <Field label={t('Название')}><input className="input" value={s.name} onChange={e => set({ name: e.target.value })} /></Field>
-        <Field label={t('Папка в облаке')} hint={t('Внутри: <сервер>/<задача>/<дата>')}><input className="input mono" value={s.root} onChange={e => set({ root: e.target.value })} /></Field>
+        {s.kind !== 'telegram' && <Field label={t('Папка в облаке')} hint={t('Внутри: <сервер>/<задача>/<дата>')}><input className="input mono" value={s.root} onChange={e => set({ root: e.target.value })} /></Field>}
       </div>
+
+      {s.kind === 'telegram' && <TelegramFields s={s} set={set} editing={!!s.id} onInstalled={installed} />}
 
       {family === 'yandex' && (
         <div className="mt16">
@@ -174,9 +190,10 @@ function StorageForm({ storage, onClose }: { storage: Storage | null; onClose: (
         <div className="mt16">
           {test.ok ? (
             <Alert tone="success">
-              {t('Подключение работает, папка {root} доступна.', { root: s.root })}
+              {s.kind === 'telegram' ? t('Подключение работает: бот может публиковать в канал.') : t('Подключение работает, папка {root} доступна.', { root: s.root })}
               {test.total > 0 && <> {t('Занято {used} из {total} (свободно {free}).', { used: bytes(test.used), total: bytes(test.total), free: bytes(test.total - test.used) })}</>}
               {test.maxFile > 0 && <> {t('Максимальный размер файла: {size}.', { size: bytes(test.maxFile) })}</>}
+              {test.notes?.map(n => <div key={n} className="mt8">⚠ {n}</div>)}
               <div className="small faint mt8">{t('Это проверка с вашего компьютера. Скорость с сервера измеряется в редакторе задачи.')}</div>
             </Alert>
           ) : <Alert tone="danger"><span className="selectable">{test.error}</span></Alert>}

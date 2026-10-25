@@ -86,6 +86,7 @@ export const kindLabels: Record<StorageKind, string> = {
   yandex_webdav: 'Яндекс Диск (WebDAV)',
   mailru: 'Облако Mail.ru',
   webdav: 'WebDAV',
+  telegram: 'Telegram',
 }
 
 export const statusLabels: Record<string, string> = {

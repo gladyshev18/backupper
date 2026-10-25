@@ -90,7 +90,7 @@ export interface JobView extends Job {
   cronError?: string
 }
 
-export type StorageKind = 'yandex' | 'yandex_webdav' | 'mailru' | 'webdav'
+export type StorageKind = 'yandex' | 'yandex_webdav' | 'mailru' | 'webdav' | 'telegram'
 
 export interface Storage {
   id: string
@@ -101,7 +101,35 @@ export interface Storage {
   password?: string
   url?: string
   root: string
+  /** Telegram: channel id (-100…) or @username, and the own Bot API server. */
+  chatId?: string
+  tgServer?: TelegramServer
 }
+
+/** Own Bot API server for a Telegram storage; admin fields stay in the panel. */
+export interface TelegramServer {
+  host: string
+  port?: number
+  user?: string
+  hostKey?: string
+  apiPort?: number
+  adminUser?: string
+  adminKeyPath?: string
+  adminPassphrase?: string
+  apiId?: string
+  apiHash?: string
+  installed?: string
+}
+
+export interface TgServerCheck {
+  ok: boolean; error?: string; os: string; arch: string; root: boolean; sudo: boolean; systemd: boolean
+  runtime: string; memTotal: number; memAvailable: number; diskFree: number
+  telegramOk: boolean; telegramMs: number; speedBps: number; agentVersion: string
+  installed: boolean; running: boolean; fingerprint: string; hostKey: string; warnings?: string[]
+}
+
+export interface TgInstallResult { ok: boolean; error?: string; log: string; storage: Storage }
+export interface TelegramChat { id: number; title: string; type: string }
 
 export interface Telegram {
   enabled: boolean
@@ -164,6 +192,8 @@ export interface SysInfo {
 
 export interface AgentInfo {
   version: string; sys: SysInfo; storages: Storage[]; jobs: JobView[]
+  /** Problems the agent found with a storage, e.g. Telegram rotation turned off. */
+  storageNotes?: Record<string, string>
 }
 
 export interface ServerStatus {
@@ -185,6 +215,7 @@ export interface ChunkPlan {
 
 export interface StorageTest {
   ok: boolean; error?: string; speedBps: number; total: number; used: number; maxFile: number; elapsedMs: number
+  notes?: string[]
 }
 
 export interface BackupEntry {

@@ -22,6 +22,10 @@ export function CheckServer(arg1) {
   return window['go']['main']['App']['CheckServer'](arg1);
 }
 
+export function CheckTelegramServer(arg1) {
+  return window['go']['main']['App']['CheckTelegramServer'](arg1);
+}
+
 export function DeleteBackup(arg1, arg2, arg3) {
   return window['go']['main']['App']['DeleteBackup'](arg1, arg2, arg3);
 }
@@ -48,6 +52,10 @@ export function GetState() {
 
 export function InstallAgent(arg1) {
   return window['go']['main']['App']['InstallAgent'](arg1);
+}
+
+export function InstallTelegramServer(arg1) {
+  return window['go']['main']['App']['InstallTelegramServer'](arg1);
 }
 
 export function NextRuns(arg1, arg2, arg3) {
@@ -120,6 +128,10 @@ export function ServerStatus(arg1) {
 
 export function SpeedTest(arg1, arg2) {
   return window['go']['main']['App']['SpeedTest'](arg1, arg2);
+}
+
+export function TelegramChats(arg1) {
+  return window['go']['main']['App']['TelegramChats'](arg1);
 }
 
 export function TestStorage(arg1) {

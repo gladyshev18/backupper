@@ -144,6 +144,15 @@ func (m *Manager) CloseAll() {
 	}
 }
 
+// forAgents drops what only the panel needs (admin access to the Bot API server).
+func forAgents(in []model.Storage) []model.Storage {
+	out := make([]model.Storage, len(in))
+	for i, s := range in {
+		out[i] = s.ForAgent()
+	}
+	return out
+}
+
 func (m *Manager) SyncPayload(s Server) model.SyncPayload {
 	cfg := m.store.Get()
 	return model.SyncPayload{
@@ -152,7 +161,7 @@ func (m *Manager) SyncPayload(s Server) model.SyncPayload {
 			EncryptionPassword: cfg.Settings.EncryptionPassword,
 			Telegram:           cfg.Settings.Telegram,
 		},
-		Storages: cfg.Storages,
+		Storages: forAgents(cfg.Storages),
 	}
 }
 

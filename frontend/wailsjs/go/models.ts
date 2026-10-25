@@ -121,6 +121,56 @@ export namespace desktop {
 		    return a;
 		}
 	}
+	export class TgServerCheck {
+	    ok: boolean;
+	    error?: string;
+	    os: string;
+	    arch: string;
+	    root: boolean;
+	    sudo: boolean;
+	    systemd: boolean;
+	    runtime: string;
+	    memTotal: number;
+	    memAvailable: number;
+	    diskFree: number;
+	    telegramOk: boolean;
+	    telegramMs: number;
+	    speedBps: number;
+	    agentVersion: string;
+	    installed: boolean;
+	    running: boolean;
+	    fingerprint: string;
+	    hostKey: string;
+	    warnings?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new TgServerCheck(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.error = source["error"];
+	        this.os = source["os"];
+	        this.arch = source["arch"];
+	        this.root = source["root"];
+	        this.sudo = source["sudo"];
+	        this.systemd = source["systemd"];
+	        this.runtime = source["runtime"];
+	        this.memTotal = source["memTotal"];
+	        this.memAvailable = source["memAvailable"];
+	        this.diskFree = source["diskFree"];
+	        this.telegramOk = source["telegramOk"];
+	        this.telegramMs = source["telegramMs"];
+	        this.speedBps = source["speedBps"];
+	        this.agentVersion = source["agentVersion"];
+	        this.installed = source["installed"];
+	        this.running = source["running"];
+	        this.fingerprint = source["fingerprint"];
+	        this.hostKey = source["hostKey"];
+	        this.warnings = source["warnings"];
+	    }
+	}
 
 }
 
@@ -240,6 +290,42 @@ export namespace main {
 	        this.settings = this.convertValues(source["settings"], desktop.Settings);
 	        this.keys = source["keys"];
 	        this.kinds = source["kinds"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class TgInstallResult {
+	    ok: boolean;
+	    error?: string;
+	    log: string;
+	    storage: model.Storage;
+	
+	    static createFrom(source: any = {}) {
+	        return new TgInstallResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.error = source["error"];
+	        this.log = source["log"];
+	        this.storage = this.convertValues(source["storage"], model.Storage);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -684,6 +770,42 @@ export namespace model {
 		    return a;
 		}
 	}
+	export class TelegramServer {
+	    host: string;
+	    port?: number;
+	    user?: string;
+	    key?: string;
+	    hostKey?: string;
+	    apiPort?: number;
+	    directUrl?: string;
+	    adminUser?: string;
+	    adminKeyPath?: string;
+	    adminPassphrase?: string;
+	    apiId?: string;
+	    apiHash?: string;
+	    installed?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TelegramServer(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.key = source["key"];
+	        this.hostKey = source["hostKey"];
+	        this.apiPort = source["apiPort"];
+	        this.directUrl = source["directUrl"];
+	        this.adminUser = source["adminUser"];
+	        this.adminKeyPath = source["adminKeyPath"];
+	        this.adminPassphrase = source["adminPassphrase"];
+	        this.apiId = source["apiId"];
+	        this.apiHash = source["apiHash"];
+	        this.installed = source["installed"];
+	    }
+	}
 	export class Storage {
 	    id: string;
 	    name: string;
@@ -693,6 +815,8 @@ export namespace model {
 	    password?: string;
 	    url?: string;
 	    root: string;
+	    chatId?: string;
+	    tgServer?: TelegramServer;
 	
 	    static createFrom(source: any = {}) {
 	        return new Storage(source);
@@ -708,7 +832,27 @@ export namespace model {
 	        this.password = source["password"];
 	        this.url = source["url"];
 	        this.root = source["root"];
+	        this.chatId = source["chatId"];
+	        this.tgServer = this.convertValues(source["tgServer"], TelegramServer);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Telegram {
 	    enabled: boolean;
@@ -810,6 +954,7 @@ export namespace model {
 	    settings: Settings;
 	    storages: Storage[];
 	    jobs: JobView[];
+	    storageNotes?: Record<string, string>;
 	
 	    static createFrom(source: any = {}) {
 	        return new AgentInfo(source);
@@ -822,6 +967,7 @@ export namespace model {
 	        this.settings = this.convertValues(source["settings"], Settings);
 	        this.storages = this.convertValues(source["storages"], Storage);
 	        this.jobs = this.convertValues(source["jobs"], JobView);
+	        this.storageNotes = source["storageNotes"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -1134,6 +1280,7 @@ export namespace model {
 	    used: number;
 	    maxFile: number;
 	    elapsedMs: number;
+	    notes?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new StorageTest(source);
@@ -1148,10 +1295,33 @@ export namespace model {
 	        this.used = source["used"];
 	        this.maxFile = source["maxFile"];
 	        this.elapsedMs = source["elapsedMs"];
+	        this.notes = source["notes"];
 	    }
 	}
 	
 	
+	
+
+}
+
+export namespace storage {
+	
+	export class TelegramChat {
+	    id: number;
+	    title: string;
+	    type: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TelegramChat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.title = source["title"];
+	        this.type = source["type"];
+	    }
+	}
 
 }
 

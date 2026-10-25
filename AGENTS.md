@@ -5,7 +5,7 @@ The owner speaks Russian: answer in Russian, keep code comments in English.
 
 ## What this is
 
-Backup system for servers and shared-hosting sites → Yandex Disk / Mail.ru Cloud / WebDAV.
+Backup system for servers and shared-hosting sites → Yandex Disk / Mail.ru Cloud / WebDAV / Telegram (own Bot API server).
 
 - **Agent** (`cmd/agent`, Linux, systemd) — keeps jobs and the cron schedule, dumps sources and **streams** them
   (gzip → optional age encryption → parts held in RAM → cloud). Nothing is written to the server disk
@@ -23,12 +23,12 @@ The panel owns global settings (clouds, encryption password, Telegram, language)
 | Path | Role |
 |---|---|
 | `main.go`, `app.go` | Wails entry; `App` methods are bound to JS (`frontend/wailsjs` is generated) |
-| `internal/desktop` | panel config (`%APPDATA%\Backupper\panel.dat`, DPAPI-encrypted), SSH dial/keys/host-key pinning, tunnel `Manager`, agent install/adopt/uninstall |
+| `internal/desktop` | panel config (`%APPDATA%\Backupper\panel.dat`, DPAPI-encrypted), SSH dial/keys/host-key pinning, tunnel `Manager`, agent install/adopt/uninstall, `tgserver.go` (check + install of the Telegram Bot API server) |
 | `internal/agent` | agent: `state.go` (config, history, speed stats), `agent.go` (cron + single worker queue), `runner.go` (run, manifest, rotation), `pipeline.go` (part uploader, retries, adaptive shrink/split), `sources.go` (mysqldump/pg_dump/tar commands), `site_source.go` (hosting sources, SFTP known_hosts), `api.go`, `install.go` (systemd), `notify.go` (Telegram) |
 | `internal/site` | `script.php` (embedded, PHP 7.1+), `site.go` (session, HMAC requests, AES-GCM responses, retries), `remote.go` (FTP/FTPS/SFTP) |
 | `internal/cms` | CMS presets (markers + disposable folders): site search under server folders → tar excludes; the same list goes to `script.php` |
 | `internal/chunk` | part-size planner + explanations (RU, EN in `messages_en.go`) |
-| `internal/storage` | Yandex Disk REST + generic WebDAV (Mail.ru, Yandex WebDAV, Nextcloud) |
+| `internal/storage` | Yandex Disk REST + generic WebDAV (Mail.ru, Yandex WebDAV, Nextcloud) + Telegram (`telegram.go`, `telegram_transport.go`; fake Bot API for tests in `telegramtest`) |
 | `internal/model` | types shared by panel and agent (JSON contract between them) |
 | `internal/version` | single version for panel and agent — **bump it** when the agent changes; the panel then offers "Update agent" |
 | `agentbin` | embeds `dist/backupper-agent-linux-{amd64,arm64}` (built by `build.ps1`, git-ignored) |
@@ -91,11 +91,42 @@ an empty retention falls back to `keep` (jobs from agents ≤ 1.1). Only folders
 older broken ones are removed. A file that fails mid-upload deletes its parts at once; when the cloud has less free space
 than the previous copy, copies the policy would drop anyway are removed before the upload.
 
+## Telegram storage (`model.StorageTelegram`)
+
+Files go to a Telegram chat (the owner's private channel) through an **own** `telegram-bot-api --local` server: uploads
+up to 2000 MB (`storage.TelegramMaxFile`), downloads without the 20 MB limit. Jobs with a Telegram storage must be
+encrypted (agent refuses others: `needsEncryption`).
+
+- **Server** (panel → Clouds → Telegram, `desktop/tgserver.go`): read-only check (OS, sudo, systemd, RAM/disk,
+  api.telegram.org TLS time, download speed from telegram.org), then install over admin SSH: Docker (`docker.io`) or podman,
+  image `aiogram/telegram-bot-api` run as the relay user with `--entrypoint /usr/local/bin/telegram-bot-api --local`,
+  systemd `backupper-tg-bot-api` publishing `127.0.0.1:8081` only, data in `/var/lib/backupper-tg`, hourly
+  `backupper-tg-clean.timer` for forgotten downloads, `logOut` from the cloud Bot API (bot of notifications is refused).
+  api_id/api_hash go to `/etc/backupper-tg/env` (0600), never to the command line.
+- **Delivery to agents on other servers**: SSH as `backupper-tg` (`model.TelegramRelayUser`) with an ed25519 key made by
+  the panel; `authorized_keys` has `restrict,port-forwarding,permitopen="127.0.0.1:8081",command="internal-sftp"`.
+  Agents forward HTTP to the Bot API and read + delete `getFile` results (absolute paths on that disk) over SFTP. The key
+  and pinned host key travel in `Storage.TgServer`; admin fields and api_hash are stripped by `Storage.ForAgent()` on sync.
+  `TgServer.DirectURL` skips SSH (tests, Bot API on the same host).
+- **Layout in the chat**: each part goes up as a silent "⏳ uploading" message; `Put(manifest.json)` re-sends the parts by
+  file_id as albums of 2–10 captioned `#server #job #dYYYYMMDD` + `file — часть N из M`, deletes the temporary
+  messages and posts `manifest.json` last (with `Manifest.Telegram`: part → message_id/file_id). No manifest message =
+  incomplete copy. A pinned message per server lists copies with links (edited, recreated if gone).
+- **Index**: the Bot API cannot read history, so the folder tree lives in `<agent data>/telegram-<storageID>.json`
+  (`storage.SetDataDir`, set by `OpenState`). Losing it leaves copies in the chat (manifests restore by hand) but the
+  agent no longer lists them.
+- **Rotation / 48 hours**: a service message is sent with the first part; 49 h later the agent deletes it and checks the
+  result (`editMessageReplyMarkup` → "not found" = deleted). If old messages cannot be deleted, `RotationBlocked()` turns
+  rotation off for that storage, `/api/info` reports it in `storageNotes`, the job editor shows it.
+- Flood control: `429` waits `retry_after` (up to 6 times). Errors never contain the bot token.
+
 ## Status / not yet verified
 
 - Not tested against real Yandex Disk, Mail.ru Cloud, a real VPS install, or real shared hostings
   (protocols are covered by local tests with WebDAV, PHP, MariaDB, SFTPGo).
 - Mail.ru WebDAV availability depends on the plan.
+- Telegram: covered by the fake Bot API only; not yet run against a real bot/channel/Bot API server (48-hour deletion,
+  hashtag linking, albums of documents, docker image entrypoint path, speed from the owner's VPS).
 
 ## Git
 

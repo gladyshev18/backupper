@@ -106,7 +106,7 @@ export default function ServerPage({ id }: { id: string }) {
       )}
 
       {editing && <ServerForm server={server} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); refresh() }} />}
-      {job && st?.info && <JobEditor serverId={id} sys={st.info.sys} job={job === 'new' ? null : job} onClose={() => setJob(null)} onSaved={() => { setJob(null); refresh() }} />}
+      {job && st?.info && <JobEditor serverId={id} sys={st.info.sys} notes={st.info.storageNotes} job={job === 'new' ? null : job} onClose={() => setJob(null)} onSaved={() => { setJob(null); refresh() }} />}
     </div>
   )
 }

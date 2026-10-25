@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backupper/internal/model"
+	"backupper/internal/storage"
 )
 
 // Config is the agent's persistent configuration (/etc/backupper/config.json).
@@ -88,6 +89,7 @@ func OpenState(p Paths) (*State, error) {
 		return nil, fmt.Errorf("в %s не задан token — выполните install", p.Config)
 	}
 	s := &State{paths: p, cfg: cfg, stats: map[string]StorageStats{}}
+	storage.SetDataDir(p.DataDir) // Telegram storages keep their message index here
 	_ = readJSON(p.history(), &s.runs)
 	_ = readJSON(p.stats(), &s.stats)
 	// Runs interrupted by a restart can never finish.

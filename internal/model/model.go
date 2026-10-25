@@ -276,17 +276,58 @@ const (
 	StorageYandexWebDAV = "yandex_webdav" // WebDAV, app password
 	StorageMailru       = "mailru"        // WebDAV, app password
 	StorageWebDAV       = "webdav"        // any WebDAV server
+	StorageTelegram     = "telegram"      // Telegram chat through an own Bot API server (telegram-bot-api --local)
 )
 
 type Storage struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Kind     string `json:"kind"`
-	Token    string `json:"token,omitempty"`
+	Token    string `json:"token,omitempty"` // OAuth token; bot token for Telegram
 	Login    string `json:"login,omitempty"`
 	Password string `json:"password,omitempty"`
 	URL      string `json:"url,omitempty"`
 	Root     string `json:"root"`
+
+	// Telegram: the chat that keeps the files (-100… id or @username) and the Bot API server.
+	ChatID   string          `json:"chatId,omitempty"`
+	TgServer *TelegramServer `json:"tgServer,omitempty"`
+}
+
+// TelegramRelayUser is the restricted account on the Bot API server: agents log in
+// with the panel-made key and may only forward to the Bot API port and use SFTP.
+const TelegramRelayUser = "backupper-tg"
+
+// TelegramServer is the own Bot API server a Telegram storage goes through. It
+// listens on the server's loopback only; agents reach it over SSH.
+type TelegramServer struct {
+	Host    string `json:"host"`
+	Port    int    `json:"port,omitempty"`    // SSH port, 22 by default
+	User    string `json:"user,omitempty"`    // relay user, TelegramRelayUser by default
+	Key     string `json:"key,omitempty"`     // relay user's private key (OpenSSH PEM), made by the panel
+	HostKey string `json:"hostKey,omitempty"` // pinned SSH host key, base64
+	APIPort int    `json:"apiPort,omitempty"` // Bot API port on the server's loopback, 8081 by default
+	// DirectURL skips SSH and reads downloaded files from the local disk: for tests
+	// and for a Bot API server running on the same machine.
+	DirectURL string `json:"directUrl,omitempty"`
+
+	// Panel only, cleared before the storage is sent to agents.
+	AdminUser       string `json:"adminUser,omitempty"`
+	AdminKeyPath    string `json:"adminKeyPath,omitempty"`
+	AdminPassphrase string `json:"adminPassphrase,omitempty"`
+	APIID           string `json:"apiId,omitempty"`
+	APIHash         string `json:"apiHash,omitempty"`
+	Installed       string `json:"installed,omitempty"` // when the panel installed the Bot API there
+}
+
+// ForAgent returns a copy without the panel-only fields.
+func (s Storage) ForAgent() Storage {
+	if s.TgServer != nil {
+		ts := *s.TgServer
+		ts.AdminUser, ts.AdminKeyPath, ts.AdminPassphrase, ts.APIID, ts.APIHash = "", "", "", "", ""
+		s.TgServer = &ts
+	}
+	return s
 }
 
 type Telegram struct {
@@ -385,6 +426,18 @@ type Manifest struct {
 	StartedAt time.Time `json:"startedAt"`
 	Finished  time.Time `json:"finishedAt"`
 	Files     []RunFile `json:"files"`
+	// Telegram: where each part lies in the chat, so a copy can be restored from the manifest alone.
+	Telegram *TelegramIndex `json:"telegram,omitempty"`
+}
+
+type TelegramIndex struct {
+	Chat     string                 `json:"chat"`
+	Messages map[string]TelegramRef `json:"messages"` // part name → message
+}
+
+type TelegramRef struct {
+	MessageID int    `json:"messageId"`
+	FileID    string `json:"fileId"`
 }
 
 type SysInfo struct {
@@ -413,6 +466,9 @@ type AgentInfo struct {
 	Settings Settings  `json:"settings"`
 	Storages []Storage `json:"storages"`
 	Jobs     []JobView `json:"jobs"`
+	// StorageNotes are problems an agent found with a storage, e.g. Telegram
+	// refusing to delete old messages (rotation is then off there).
+	StorageNotes map[string]string `json:"storageNotes,omitempty"`
 }
 
 // JobView is a job plus its runtime state.
@@ -450,6 +506,7 @@ type StorageTest struct {
 	Used      int64   `json:"used"`
 	MaxFile   int64   `json:"maxFile"`
 	ElapsedMs int64   `json:"elapsedMs"`
+	Notes     []string `json:"notes,omitempty"` // what works only partly, e.g. missing bot rights
 }
 
 type BackupEntry struct {

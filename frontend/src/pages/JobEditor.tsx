@@ -17,14 +17,21 @@ import { getLang, locale, t } from '../i18n'
 // Same "round" sizes as the agent's planner (internal/chunk).
 const SIZES_MB = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048]
 
-export default function JobEditor({ serverId, sys, job, onClose, onSaved }: {
-  serverId: string; sys: SysInfo; job: JobView | null; onClose: () => void; onSaved: () => void
+export default function JobEditor({ serverId, sys, notes, job, onClose, onSaved }: {
+  serverId: string; sys: SysInfo; notes?: Record<string, string>; job: JobView | null; onClose: () => void; onSaved: () => void
 }) {
   const { state, go } = useApp()
   const { run, busy } = useUI()
   const [j, setJ] = useState<Job>(() => job ? { ...structuredClone(job), retention: policy(job) } : newJob(state.storages.slice(0, 1).map(s => s.id)))
   const set = (p: Partial<Job>) => setJ(v => ({ ...v, ...p }))
   const [open, setOpen] = useState<string | null>(job ? null : 'new')
+  // Telegram takes encrypted copies only (the agent refuses others too).
+  const telegram = state.storages.filter(s => s.kind === 'telegram' && j.storages.includes(s.id))
+  const toggleStorage = (id: string, on: boolean) => {
+    const next = on ? j.storages.filter(x => x !== id) : [...j.storages, id]
+    const tg = !on && state.storages.find(s => s.id === id)?.kind === 'telegram'
+    set(tg ? { storages: next, encrypt: true } : { storages: next })
+  }
 
   const save = () => run('save', async () => {
     const { nextRun, lastRun, lastSize, cronError, ...clean } = j as JobView
@@ -87,7 +94,7 @@ export default function JobEditor({ serverId, sys, job, onClose, onSaved }: {
               return (
                 <label key={s.id} className={cls('kind-tile', on && 'on')} style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <input type="checkbox" checked={on} style={{ accentColor: 'var(--accent)', width: 16, height: 16 }}
-                    onChange={() => set({ storages: on ? j.storages.filter(x => x !== s.id) : [...j.storages, s.id] })} />
+                    onChange={() => toggleStorage(s.id, on)} />
                   <div className="grow">
                     <div style={{ fontWeight: 600 }}>{s.name}</div>
                     <div className="small faint">{t(kindLabels[s.kind])} · {s.root}</div>
@@ -96,6 +103,10 @@ export default function JobEditor({ serverId, sys, job, onClose, onSaved }: {
               )
             })}
           </div>
+        )}
+        {telegram.map(s => notes?.[s.id] && <div key={s.id} className="mt12"><Alert tone="warning">{s.name}: {notes[s.id]}</Alert></div>)}
+        {telegram.length > 0 && !telegram.some(s => notes?.[s.id]) && (
+          <div className="small faint mt12">{t('Telegram: старые копии удаляются, только если бот может удалять сообщения старше 48 часов — агент проверит это сам через двое суток после первой выгрузки.')}</div>
         )}
         <RetentionSection j={j} set={set} sys={sys} lastSize={job?.lastSize || 0} />
         <div className="grid g2 mt16">
@@ -111,7 +122,8 @@ export default function JobEditor({ serverId, sys, job, onClose, onSaved }: {
           </Field>
         </div>
         <div className="mt16">
-          <Toggle on={j.encrypt} onChange={v => set({ encrypt: v })} label={<span className="row" style={{ gap: 6 }}><Lock size={14} /> {t('Шифровать архивы (age, AES-256 / ChaCha20)')}</span>} />
+          <Toggle on={j.encrypt} onChange={v => set({ encrypt: v || telegram.length > 0 })} label={<span className="row" style={{ gap: 6 }}><Lock size={14} /> {t('Шифровать архивы (age, AES-256 / ChaCha20)')}</span>} />
+          {telegram.length > 0 && <div className="small faint mt8">{t('Для Telegram шифрование обязательно.')}</div>}
           {j.encrypt && !state.settings.encryptionPassword && <div className="mt8"><Alert tone="warning">{t('Задайте пароль шифрования в «Настройках», иначе бэкап завершится ошибкой.')}</Alert></div>}
           {j.encrypt && state.settings.encryptionPassword && <div className="small faint mt8">{t('Без пароля из «Настроек» копии восстановить невозможно — сохраните его в надёжном месте.')}</div>}
         </div>
@@ -457,6 +469,7 @@ function ChunkSection({ serverId, j, set }: { serverId: string; j: Job; set: (p:
         const name = state.storages.find(s => s.id === sid)?.name || sid
         const r = await api.speedTest(serverId, sid)
         if (r.ok) toast('success', t('{name}: {speed} с сервера', { name, speed: speed(r.speedBps) }))
+        if (r.ok) r.notes?.forEach(n => toast('info', `${name}: ${n}`))
         else toast('error', `${name}: ${r.error}`)
       }
       load()

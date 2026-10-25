@@ -72,14 +72,19 @@ func New(s model.Storage) (Storage, error) {
 			return nil, fmt.Errorf("не указан адрес WebDAV")
 		}
 		return newWebDAV(s.URL, s.Login, s.Password)
+	case model.StorageTelegram:
+		return newTelegram(s)
 	}
 	return nil, fmt.Errorf("неизвестный тип хранилища %q", s.Kind)
 }
 
 // KnownMaxFile returns a per-file limit known in advance for a provider.
 func KnownMaxFile(kind string) int64 {
-	if kind == model.StorageMailru {
+	switch kind {
+	case model.StorageMailru:
 		return 2 << 30 // free Mail.ru plans reject files over 2 GB
+	case model.StorageTelegram:
+		return TelegramMaxFile
 	}
 	return 0
 }
@@ -117,23 +122,30 @@ func readErr(resp *http.Response) error {
 	return &httpError{Status: resp.StatusCode, Body: string(b)}
 }
 
-// IsRetryable tells whether an upload error is worth repeating.
-func IsRetryable(err error) bool {
+// status is the HTTP-like code of a cloud error, 0 for network errors.
+func status(err error) int {
 	var he *httpError
 	if errors.As(err, &he) {
-		switch he.Status {
-		case 401, 403, 404, 409, 413, 507:
-			return false
-		}
+		return he.Status
+	}
+	var te *tgError
+	if errors.As(err, &te) {
+		return te.Code
+	}
+	return 0
+}
+
+// IsRetryable tells whether an upload error is worth repeating.
+func IsRetryable(err error) bool {
+	switch status(err) {
+	case 400, 401, 403, 404, 409, 413, 507:
+		return false
 	}
 	return !errors.Is(err, context.Canceled)
 }
 
 // IsTooLarge reports whether the cloud rejected the payload because of its size.
-func IsTooLarge(err error) bool {
-	var he *httpError
-	return errors.As(err, &he) && he.Status == 413
-}
+func IsTooLarge(err error) bool { return status(err) == 413 }
 
 // Test checks credentials and, when speedBytes > 0, measures upload speed
 // by sending a throwaway file of that size into the storage root.
@@ -152,6 +164,16 @@ func Test(ctx context.Context, s model.Storage, speedBytes int64) model.StorageT
 	res.Total, res.Used, res.MaxFile = q.Total, q.Used, q.MaxFile
 	if res.MaxFile == 0 {
 		res.MaxFile = KnownMaxFile(s.Kind)
+	}
+	if c, ok := st.(interface {
+		Check(context.Context) ([]string, error)
+	}); ok {
+		notes, err := c.Check(ctx)
+		if err != nil {
+			res.Error = err.Error()
+			return res
+		}
+		res.Notes = notes
 	}
 	root := Clean(s.Root)
 	if err := st.MkdirAll(ctx, root); err != nil {

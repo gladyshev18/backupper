@@ -71,12 +71,19 @@ func (a *Agent) Handler() http.Handler {
 
 func (a *Agent) hInfo(w http.ResponseWriter, r *http.Request) {
 	cfg := a.state.Config()
+	notes := map[string]string{}
+	for _, s := range cfg.Storages {
+		if n := storage.TelegramNote(s); n != "" {
+			notes[s.ID] = n
+		}
+	}
 	writeJSONResp(w, model.AgentInfo{
-		Version:  a.version,
-		Sys:      CollectSysInfo(),
-		Settings: cfg.Settings,
-		Storages: cfg.Storages,
-		Jobs:     a.JobViews(),
+		Version:      a.version,
+		Sys:          CollectSysInfo(),
+		Settings:     cfg.Settings,
+		Storages:     cfg.Storages,
+		Jobs:         a.JobViews(),
+		StorageNotes: notes,
 	})
 }
 
@@ -146,6 +153,22 @@ func validateJob(j *model.Job, others []model.Job) error {
 	return nil
 }
 
+// needsEncryption refuses jobs that would put plain archives into Telegram:
+// whoever gets into the chat must not be able to read the backups.
+func needsEncryption(j model.Job, storages []model.Storage) error {
+	if j.Encrypt {
+		return nil
+	}
+	for _, id := range j.Storages {
+		for _, s := range storages {
+			if s.ID == id && s.Kind == model.StorageTelegram {
+				return fmt.Errorf("в Telegram («%s») можно выгружать только зашифрованные копии — включите шифрование", s.Name)
+			}
+		}
+	}
+	return nil
+}
+
 func (a *Agent) hSaveJob(w http.ResponseWriter, r *http.Request) {
 	var j model.Job
 	if err := decode(r, &j); err != nil {
@@ -158,6 +181,9 @@ func (a *Agent) hSaveJob(w http.ResponseWriter, r *http.Request) {
 	}
 	err := a.state.update(func(c *Config) error {
 		if err := validateJob(&j, c.Jobs); err != nil {
+			return err
+		}
+		if err := needsEncryption(j, c.Storages); err != nil {
 			return err
 		}
 		for i := range c.Jobs {
