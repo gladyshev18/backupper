@@ -134,6 +134,14 @@ func validateJob(j *model.Job, others []model.Job) error {
 	if j.Keep < 0 {
 		j.Keep = 0
 	}
+	// Keep mirrors the simple count so an older agent rotates the same way;
+	// with calendar rules it is 0 and an older agent deletes nothing.
+	j.Retention = j.Retention.Normalized()
+	if j.Retention.Calendar() {
+		j.Keep = 0
+	} else if !j.Retention.Empty() {
+		j.Keep = j.Retention.Last
+	}
 	j.Chunk = j.Chunk.Normalized()
 	return nil
 }

@@ -1,8 +1,8 @@
 // Thin typed wrapper over the Go methods bound by Wails.
 import * as G from '../wailsjs/go/main/App'
 import type {
-  AppState, BackupEntry, ChunkPlan, Job, ProbeResult, Run, Schedule, Server, ServerCheck,
-  ServerStatus, Settings, Source, Storage, StorageTest,
+  AppState, BackupEntry, ChunkPlan, CMSPreset, Job, ProbeResult, Retention, RetentionPreview, Run, Schedule, Server,
+  ServerCheck, ServerStatus, Settings, Source, Storage, StorageTest,
 } from './types'
 
 const g = G as any
@@ -43,7 +43,14 @@ export const api = {
   testTelegram: (t: Settings['telegram']): Promise<void> => g.TestTelegram(t),
   openURL: (u: string): Promise<void> => g.OpenURL(u),
   nextRuns: (s: Schedule, tzOffset: number, count: number): Promise<string[]> => g.NextRuns(s, tzOffset, count),
+  retentionPreview: (s: Schedule, tzOffset: number, r: Retention): Promise<RetentionPreview> => g.RetentionPreview(s, tzOffset, r),
+  cmsPresets: (): Promise<CMSPreset[]> => g.CMSPresets(),
 }
+
+let presetsCache: Promise<CMSPreset[]> | null = null
+
+/** CMS presets never change while the panel runs: fetch them once. */
+export const cmsPresets = () => (presetsCache ??= api.cmsPresets().catch(() => { presetsCache = null; return [] }))
 
 export function errText(e: unknown): string {
   if (typeof e === 'string') return e

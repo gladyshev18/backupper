@@ -271,6 +271,19 @@ func (s *State) ExpectedSize(jobID string) int64 {
 	return 0
 }
 
+// LastBytes is the cloud size of the last successful run of a job.
+func (s *State) LastBytes(jobID string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.runs) - 1; i >= 0; i-- {
+		r := s.runs[i]
+		if r.JobID == jobID && (r.Status == model.RunSuccess || r.Status == model.RunWarning) {
+			return r.Bytes
+		}
+	}
+	return 0
+}
+
 func (s *State) Stats(id string) StorageStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()

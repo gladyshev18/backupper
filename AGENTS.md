@@ -26,6 +26,7 @@ The panel owns global settings (clouds, encryption password, Telegram, language)
 | `internal/desktop` | panel config (`%APPDATA%\Backupper\panel.dat`, DPAPI-encrypted), SSH dial/keys/host-key pinning, tunnel `Manager`, agent install/adopt/uninstall |
 | `internal/agent` | agent: `state.go` (config, history, speed stats), `agent.go` (cron + single worker queue), `runner.go` (run, manifest, rotation), `pipeline.go` (part uploader, retries, adaptive shrink/split), `sources.go` (mysqldump/pg_dump/tar commands), `site_source.go` (hosting sources, SFTP known_hosts), `api.go`, `install.go` (systemd), `notify.go` (Telegram) |
 | `internal/site` | `script.php` (embedded, PHP 7.1+), `site.go` (session, HMAC requests, AES-GCM responses, retries), `remote.go` (FTP/FTPS/SFTP) |
+| `internal/cms` | CMS presets (markers + disposable folders): site search under server folders → tar excludes; the same list goes to `script.php` |
 | `internal/chunk` | part-size planner + explanations (RU, EN in `messages_en.go`) |
 | `internal/storage` | Yandex Disk REST + generic WebDAV (Mail.ru, Yandex WebDAV, Nextcloud) |
 | `internal/model` | types shared by panel and agent (JSON contract between them) |
@@ -85,7 +86,10 @@ stale ones matching that exact pattern are deleted on the next run.
 ## Cloud layout
 
 `<root>/<server slug>/<job slug>/<YYYY-MM-DD_HH-MM-SS>/<file>.partNNNN` + `manifest.json` (status, files, parts, sha256).
-Rotation keeps the newest N folders whose manifest says success/warning.
+Rotation follows `Job.Retention` (GFS: last N + newest copy per day/ISO week/month/year, `model.Retention.Select`);
+an empty retention falls back to `keep` (jobs from agents ≤ 1.1). Only folders whose manifest says success/warning count;
+older broken ones are removed. A file that fails mid-upload deletes its parts at once; when the cloud has less free space
+than the previous copy, copies the policy would drop anyway are removed before the upload.
 
 ## Status / not yet verified
 

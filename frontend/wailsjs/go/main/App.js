@@ -10,6 +10,10 @@ export function Backups(arg1, arg2, arg3) {
   return window['go']['main']['App']['Backups'](arg1, arg2, arg3);
 }
 
+export function CMSPresets() {
+  return window['go']['main']['App']['CMSPresets']();
+}
+
 export function CancelRun(arg1, arg2) {
   return window['go']['main']['App']['CancelRun'](arg1, arg2);
 }
@@ -72,6 +76,10 @@ export function Probe(arg1, arg2) {
 
 export function ResetHostKey(arg1) {
   return window['go']['main']['App']['ResetHostKey'](arg1);
+}
+
+export function RetentionPreview(arg1, arg2, arg3) {
+  return window['go']['main']['App']['RetentionPreview'](arg1, arg2, arg3);
 }
 
 export function RevealFile(arg1) {

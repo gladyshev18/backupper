@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"backupper/internal/cms"
 	"backupper/internal/model"
 )
 
@@ -352,6 +353,9 @@ func (s *Session) Stream(ctx context.Context, action string, raw func(int64)) io
 			if action == "files" {
 				params["exclude"] = s.excludes
 				params["cmsExcludes"] = s.src.CMSExcludes
+				if s.src.CMSExcludes {
+					params["presets"] = cms.Presets
+				}
 			}
 			if state != nil {
 				params["state"] = state

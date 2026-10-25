@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import {
-  Archive, ChevronDown, ChevronRight, Database, FolderTree, Gauge, Globe, HardDrive, Lock, MemoryStick, Search,
-  Settings2, Timer, Trash2, Zap,
+  Archive, CalendarRange, ChevronDown, ChevronRight, Database, FolderTree, Gauge, Globe, HardDrive, Lock, MemoryStick, Search,
+  Settings2, Sparkles, Timer, Trash2, Zap,
 } from 'lucide-react'
 import SiteEditor from './SiteEditor'
 import { useApp } from '../App'
-import { api, errText } from '../api'
-import type { ChunkPlan, Job, JobView, ProbeResult, Source, SysInfo } from '../types'
+import { api, cmsPresets, errText } from '../api'
+import type { ChunkPlan, CMSPreset, Job, JobView, ProbeResult, Retention, RetentionPreview, Source, SysInfo } from '../types'
+import { KEEP_DAILY, KEEP_LAST, KEEP_MONTHLY, KEEP_WEEKLY, KEEP_YEARLY } from '../types'
 import { Alert, Bar, Button, Field, Modal, Seg, Toggle, useUI } from '../components/ui'
-import { bytes, cls, configPresets, kindLabels, newJob, newSource, seconds, sourceLabels, speed } from '../util'
+import {
+  ageText, bytes, cls, configPresets, isCalendar, kindLabels, newJob, newSource, policy, seconds, sourceLabels, speed,
+} from '../util'
 import { getLang, locale, t } from '../i18n'
 
 // Same "round" sizes as the agent's planner (internal/chunk).
@@ -19,12 +22,13 @@ export default function JobEditor({ serverId, sys, job, onClose, onSaved }: {
 }) {
   const { state, go } = useApp()
   const { run, busy } = useUI()
-  const [j, setJ] = useState<Job>(() => job ? structuredClone(job) : newJob(state.storages.slice(0, 1).map(s => s.id)))
+  const [j, setJ] = useState<Job>(() => job ? { ...structuredClone(job), retention: policy(job) } : newJob(state.storages.slice(0, 1).map(s => s.id)))
   const set = (p: Partial<Job>) => setJ(v => ({ ...v, ...p }))
   const [open, setOpen] = useState<string | null>(job ? null : 'new')
 
   const save = () => run('save', async () => {
-    const { nextRun, lastRun, cronError, ...clean } = j as JobView
+    const { nextRun, lastRun, lastSize, cronError, ...clean } = j as JobView
+    clean.keep = isCalendar(clean.retention) ? 0 : clean.retention.last
     await api.saveJob(serverId, clean)
     onSaved()
   }, job ? t('Задача сохранена') : t('Задача создана'))
@@ -93,10 +97,8 @@ export default function JobEditor({ serverId, sys, job, onClose, onSaved }: {
             })}
           </div>
         )}
-        <div className="grid g3 mt16">
-          <Field label={t('Хранить последних копий')} hint={t('Более старые удаляются после успешного бэкапа. 0 — не удалять.')}>
-            <input className="input" type="number" min={0} value={j.keep} onChange={e => set({ keep: Math.max(0, +e.target.value) })} />
-          </Field>
+        <RetentionSection j={j} set={set} sys={sys} lastSize={job?.lastSize || 0} />
+        <div className="grid g2 mt16">
           <Field label={t('Уведомления в Telegram')} hint={state.settings.telegram.enabled ? undefined : t('Telegram не настроен в «Настройках»')}>
             <select className="select" value={j.notify} onChange={e => set({ notify: e.target.value as Job['notify'] })}>
               <option value="errors">{t('Только об ошибках')}</option>
@@ -185,14 +187,17 @@ function SourceEditor({ serverId, src, open, onToggle, onChange, onRemove }: {
             </>
           )}
           {src.type === 'files' && (
-            <div className="grid g2">
-              <Field label={t('Папки и файлы (по одному в строке)')}>
-                <textarea className="textarea" rows={4} value={lines(src.paths)} onChange={e => onChange({ paths: parse(e.target.value) })} />
-              </Field>
-              <Field label={t('Исключить (шаблоны tar)')} hint={t('Например: */cache/*, *.log, node_modules')}>
-                <textarea className="textarea" rows={4} value={lines(src.excludes)} onChange={e => onChange({ excludes: parse(e.target.value) })} />
-              </Field>
-            </div>
+            <>
+              <div className="grid g2">
+                <Field label={t('Папки и файлы (по одному в строке)')}>
+                  <textarea className="textarea" rows={4} value={lines(src.paths)} onChange={e => onChange({ paths: parse(e.target.value) })} />
+                </Field>
+                <Field label={t('Исключить (шаблоны tar)')} hint={t('Например: */cache/*, *.log, node_modules')}>
+                  <textarea className="textarea" rows={4} value={lines(src.excludes)} onChange={e => onChange({ excludes: parse(e.target.value) })} />
+                </Field>
+              </div>
+              <CMSExcludes on={!!src.cmsExcludes} onChange={v => onChange({ cmsExcludes: v })} />
+            </>
           )}
           {src.type === 'site' && <SiteEditor serverId={serverId} src={src} onChange={onChange} />}
           {src.type === 'configs' && (
@@ -230,6 +235,127 @@ function SourceEditor({ serverId, src, open, onToggle, onChange, onRemove }: {
             </div>
           )}
           {probe?.ok && probe.paths && src.type === 'configs' && <div className="small faint mono">{probe.paths.join('  ')}</div>}
+          {probe?.ok && src.type === 'files' && (
+            <div className="small muted">
+              {probe.cms?.length
+                ? <>{t('Найдены сайты:')} {probe.cms.map(c => <span key={c.path} className="chip mono" style={{ marginRight: 6 }}>{t(c.name)} · {c.path}</span>)}</>
+                : t('Сайтов известных CMS не найдено — исключаются только шаблоны выше.')}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Toggle for the CMS presets with the list of what they leave out. */
+export function CMSExcludes({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  const [presets, setPresets] = useState<CMSPreset[]>([])
+  const [show, setShow] = useState(false)
+  useEffect(() => { cmsPresets().then(setPresets) }, [])
+  return (
+    <div>
+      <div className="row wrap" style={{ gap: 10 }}>
+        <Toggle on={on} onChange={onChange} label={<><Sparkles size={13} /> {t('Не архивировать кэш и резервные копии CMS')}</>} />
+        <button className="btn ghost sm" type="button" onClick={() => setShow(!show)}>
+          {show ? <ChevronDown size={14} /> : <ChevronRight size={14} />} {t('Что исключается')}
+        </button>
+      </div>
+      <div className="small faint mt8">
+        {t('Агент сам находит сайты в указанных папках (до {n} уровней вглубь) и пропускает то, что CMS пересоздаёт сама, и её собственные бэкапы — они уже сжаты и обычно занимают больше всего места: {list}.', { n: 4, list: presets.map(p => t(p.name)).join(', ') })}
+      </div>
+      {show && (
+        <div className="card card-pad mt8" style={{ background: 'var(--surface-2)' }}>
+          <div className="kv">
+            {presets.map(p => <Fragment key={p.id}><span className="k">{t(p.name)}</span><span className="mono small">{p.excludes.join('  ')}</span></Fragment>)}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+const RET_PRESETS: [string, Retention][] = [
+  ['Месяц по неделям, год по месяцам', { last: 0, daily: 0, weekly: 4, monthly: 12, yearly: 0 }],
+  ['…и ещё по копии за 3 года', { last: 0, daily: 0, weekly: 4, monthly: 12, yearly: 3 }],
+  ['Неделя по дням, месяц по неделям, полгода по месяцам', { last: 0, daily: 7, weekly: 4, monthly: 6, yearly: 0 }],
+]
+
+const RET_FIELDS: [keyof Retention, string, string][] = [
+  ['last', 'Последних', 'любых, подряд'],
+  ['daily', 'По дням', 'одна за день'],
+  ['weekly', 'По неделям', 'одна за неделю'],
+  ['monthly', 'По месяцам', 'одна за месяц'],
+  ['yearly', 'По годам', 'одна за год'],
+]
+
+function reasonText(r: number): string {
+  const out: string[] = []
+  if (r & KEEP_LAST) out.push(t('последняя'))
+  if (r & KEEP_DAILY) out.push(t('дневная'))
+  if (r & KEEP_WEEKLY) out.push(t('недельная'))
+  if (r & KEEP_MONTHLY) out.push(t('месячная'))
+  if (r & KEEP_YEARLY) out.push(t('годовая'))
+  return out.join(', ')
+}
+
+function RetentionSection({ j, set, sys, lastSize }: { j: Job; set: (p: Partial<Job>) => void; sys: SysInfo; lastSize: number }) {
+  const r = j.retention
+  const [calendar, setCalendar] = useState(isCalendar(r))
+  const upd = (p: Partial<Retention>) => set({ retention: { ...r, ...p } })
+  const [prev, setPrev] = useState<RetentionPreview | null>(null)
+  useEffect(() => {
+    const timer = setTimeout(() => api.retentionPreview(j.schedule, sys.tzOffset, r).then(setPrev).catch(() => setPrev(null)), 250)
+    return () => clearTimeout(timer)
+  }, [JSON.stringify([r, j.schedule])])
+  const mode = (m: 'simple' | 'calendar') => {
+    setCalendar(m === 'calendar')
+    if (m === 'calendar' && !isCalendar(r)) upd(RET_PRESETS[0][1])
+    if (m === 'simple') set({ retention: { last: r.last || 7, daily: 0, weekly: 0, monthly: 0, yearly: 0 } })
+  }
+  const ages = prev?.ages || []
+  const count = ages.length
+  return (
+    <div className="mt16">
+      <div className="row wrap" style={{ gap: 14 }}>
+        <span style={{ fontWeight: 600 }}><CalendarRange size={14} style={{ verticalAlign: -2 }} /> {t('Сколько хранить')}</span>
+        <Seg value={calendar ? 'calendar' : 'simple'} onChange={mode} options={[['simple', t('Последние N')], ['calendar', t('По календарю')]]} />
+      </div>
+      {!calendar ? (
+        <div className="grid g3 mt12">
+          <Field label={t('Хранить последних копий')} hint={t('Более старые удаляются после успешного бэкапа. 0 — не удалять.')}>
+            <input className="input" type="number" min={0} value={r.last} onChange={e => upd({ last: Math.max(0, +e.target.value) })} />
+          </Field>
+        </div>
+      ) : (
+        <>
+          <div className="small muted mt8" style={{ maxWidth: 680 }}>
+            {t('Из каждого периода остаётся самая новая копия. Копия, подходящая под несколько правил, хранится один раз. Удаляется только то, что не нужно ни одному правилу.')}
+          </div>
+          <div className="row wrap mt12" style={{ gap: 12, alignItems: 'flex-start' }}>
+            {RET_FIELDS.map(([k, label, hint]) => (
+              <Field key={k} label={t(label)} hint={t(hint)}>
+                <input className="input" type="number" min={0} style={{ width: 110 }} value={r[k]} onChange={e => upd({ [k]: Math.max(0, +e.target.value) })} />
+              </Field>
+            ))}
+          </div>
+          <div className="row wrap mt8" style={{ gap: 6 }}>
+            {RET_PRESETS.map(([label, p]) => <button key={label} type="button" className="btn ghost sm" onClick={() => upd(p)}>{t(label)}</button>)}
+          </div>
+        </>
+      )}
+      {count > 0 && (
+        <div className="card card-pad mt12" style={{ background: 'var(--surface-2)' }}>
+          <div className="small">
+            {t('В облаке будет храниться копий: {n}, самая старая — {age} назад.', { n: count, age: ageText(ages[count - 1]) })}
+            {lastSize > 0 && <> {t('При размере копии {size} это около {total}.', { size: bytes(lastSize), total: bytes(lastSize * count) })}</>}
+            {prev?.assumed && <span className="faint"> {t('(расчёт для запуска раз в день)')}</span>}
+          </div>
+          {calendar && (
+            <div className="row wrap mt8" style={{ gap: 4 }}>
+              {ages.map((a, i) => <span key={i} className="chip" title={reasonText(prev!.reasons![i])}>{ageText(a)}</span>)}
+            </div>
+          )}
         </div>
       )}
     </div>

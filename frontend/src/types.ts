@@ -11,8 +11,12 @@ export interface Source {
   extraArgs?: string
   paths?: string[]
   excludes?: string[]
+  cmsExcludes?: boolean
   site?: SiteSource
 }
+
+export interface CMSPreset { id: string; name: string; markers: string[]; excludes: string[] }
+export interface CMSSite { path: string; cms: string; name: string }
 
 export interface SiteSource {
   protocol: 'ftp' | 'ftps' | 'sftp'
@@ -57,6 +61,14 @@ export interface ChunkSettings {
   buffer: 'auto' | 'memory' | 'disk'
 }
 
+/** GFS retention: newest N copies plus the newest copy of each of the last N days/weeks/months/years. */
+export interface Retention { last: number; daily: number; weekly: number; monthly: number; yearly: number }
+
+/** Bits of RetentionPreview.reasons, as model.KeepReason. */
+export const KEEP_LAST = 1, KEEP_DAILY = 2, KEEP_WEEKLY = 4, KEEP_MONTHLY = 8, KEEP_YEARLY = 16
+
+export interface RetentionPreview { ages: number[] | null; reasons: number[] | null; assumed: boolean }
+
 export interface Job {
   id: string
   name: string
@@ -64,6 +76,7 @@ export interface Job {
   schedule: Schedule
   storages: string[]
   keep: number
+  retention: Retention
   encrypt: boolean
   compression: number
   chunk: ChunkSettings
@@ -73,6 +86,7 @@ export interface Job {
 export interface JobView extends Job {
   nextRun?: string
   lastRun?: Run
+  lastSize?: number
   cronError?: string
 }
 
@@ -177,4 +191,4 @@ export interface BackupEntry {
   dir: string; name: string; status: string; started: string; size: number; files: RunFile[]; complete: boolean
 }
 
-export interface ProbeResult { ok: boolean; error?: string; databases?: string[]; paths?: string[]; site?: SiteInfo }
+export interface ProbeResult { ok: boolean; error?: string; databases?: string[]; paths?: string[]; cms?: CMSSite[]; site?: SiteInfo }

@@ -1,15 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronDown, ChevronRight, Search, ShieldCheck } from 'lucide-react'
-import { api, errText } from '../api'
+import { api, cmsPresets, errText } from '../api'
 import type { ProbeResult, SiteSource, Source } from '../types'
 import { Alert, Bar, Button, Field, Seg, Toggle } from '../components/ui'
 import { bytes } from '../util'
 import { t } from '../i18n'
-
-const cmsExcludes: Record<string, string> = {
-  bitrix: 'bitrix/cache, managed_cache, stack_cache, html_pages, backup, upload/tmp, upload/resize_cache',
-  wordpress: 'wp-content/cache, upgrade, папки плагинов резервного копирования',
-}
 
 // Settings of a site on shared hosting: FTP access, site address, what to save.
 export default function SiteEditor({ serverId, src, onChange }: { serverId: string; src: Source; onChange: (p: Partial<Source>) => void }) {
@@ -18,6 +13,8 @@ export default function SiteEditor({ serverId, src, onChange }: { serverId: stri
   const [probe, setProbe] = useState<ProbeResult | null>(null)
   const [probing, setProbing] = useState(false)
   const [manualDB, setManualDB] = useState(!!s.dbName)
+  const [presets, setPresets] = useState<string[]>([])
+  useEffect(() => { cmsPresets().then(p => setPresets(p.map(x => t(x.name)))) }, [])
   const doProbe = async () => {
     setProbing(true); setProbe(null)
     try { setProbe(await api.probe(serverId, src)) } catch (e) { setProbe({ ok: false, error: errText(e) }) } finally { setProbing(false) }
@@ -79,7 +76,7 @@ export default function SiteEditor({ serverId, src, onChange }: { serverId: stri
       </div>
       {s.files && (
         <Toggle on={s.cmsExcludes} onChange={v => set({ cmsExcludes: v })}
-          label={<>{t('Не архивировать кэш и резервные копии CMS')} <span className="faint small">({cmsExcludes[s.cms] ? t(cmsExcludes[s.cms]) : t('для Битрикса и WordPress')})</span></>} />
+          label={<>{t('Не архивировать кэш и резервные копии CMS')} <span className="faint small">({t('определяется по файлам сайта: {list}', { list: presets.join(', ') })})</span></>} />
       )}
       {s.db && (
         <div>

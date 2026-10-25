@@ -63,9 +63,10 @@ func helperStream(size int) stream {
 
 type davServer struct {
 	*httptest.Server
-	fs       webdav.FileSystem
-	maxPut   int64
-	putCount int
+	fs        webdav.FileSystem
+	maxPut    int64
+	putCount  int
+	failAfter int // PUTs after this many answer 507 (cloud is full); 0 = never
 }
 
 func newDAV(t *testing.T) *davServer {
@@ -74,6 +75,11 @@ func newDAV(t *testing.T) *davServer {
 	d.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPut {
 			d.putCount++
+			if d.failAfter > 0 && d.putCount > d.failAfter {
+				io.Copy(io.Discard, r.Body)
+				http.Error(w, "insufficient storage", http.StatusInsufficientStorage)
+				return
+			}
 			if d.maxPut > 0 && r.ContentLength > d.maxPut {
 				io.Copy(io.Discard, r.Body)
 				http.Error(w, "too large", http.StatusRequestEntityTooLarge)
@@ -248,7 +254,7 @@ func TestRotation(t *testing.T) {
 	}
 	run := &model.Run{ID: "r"}
 	a.state.AddRun(run)
-	a.rotate(ctx, run, last, 2)
+	a.rotate(ctx, run, last, model.Retention{Last: 2}, false)
 	entries, err := last.st.List(ctx, path.Dir(last.dir))
 	if err != nil {
 		t.Fatal(err)
@@ -262,6 +268,79 @@ func TestRotation(t *testing.T) {
 	want := []string{"2026-01-03_03-00-00", "2026-01-05_03-00-00"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("after rotation: %v, want %v", names, want)
+	}
+}
+
+// A file that failed half way must not leave its parts in the cloud.
+func TestFailedFilePartsRemoved(t *testing.T) {
+	dav := newDAV(t)
+	dav.failAfter = 3
+	a := newTestAgent(t, dav.URL)
+	plan := model.ChunkPlan{Size: chunk.MinSize, Buffer: model.BufferMemory}
+	run, rf := streamOnce(t, a, 60<<20, plan)
+	if rf.Error == "" {
+		t.Fatal("expected an upload error")
+	}
+	job, _ := a.state.Job("j1")
+	ds, _ := a.openDests(job, run.RemoteDir)
+	entries, err := ds[0].st.List(context.Background(), ds[0].dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("parts left in the cloud: %+v", entries)
+	}
+}
+
+// Calendar rotation keeps weekly and monthly copies; early rotation spares the
+// newest complete copy even when the policy would drop it.
+func TestRotationCalendar(t *testing.T) {
+	dav := newDAV(t)
+	a := newTestAgent(t, dav.URL)
+	job, _ := a.state.Job("j1")
+	ctx := context.Background()
+	base := time.Date(2026, 1, 4, 3, 0, 0, 0, time.Local) // Sunday
+	var last dest
+	var names []string
+	for i := 0; i < 20; i++ { // 20 weekly runs: Jan 4 … May 17
+		name := base.AddDate(0, 0, 7*i).Format(runDirLayout)
+		ds, _ := a.openDests(job, path.Join(a.jobDir(job), name))
+		d := ds[0]
+		d.st.MkdirAll(ctx, d.dir)
+		mb, _ := json.Marshal(model.Manifest{Status: model.RunSuccess})
+		d.st.Put(ctx, path.Join(d.dir, "manifest.json"), bytes.NewReader(mb), int64(len(mb)))
+		last = d
+		names = append(names, name)
+	}
+	list := func() string {
+		entries, _ := last.st.List(ctx, path.Dir(last.dir))
+		var got []string
+		for _, e := range entries {
+			got = append(got, e.Name[:10])
+		}
+		sort.Strings(got)
+		return strings.Join(got, ",")
+	}
+	run := &model.Run{ID: "r"}
+	a.state.AddRun(run)
+
+	// Early, with a policy keeping only the current copy: the previous one survives.
+	a.rotate(ctx, run, last, model.Retention{Last: 1}, true)
+	if got := list(); got != "2026-05-10,2026-05-17" {
+		t.Fatalf("early rotation left %s", got)
+	}
+
+	// Rebuild and apply 4 weeks + 3 months.
+	for _, name := range names[:18] {
+		ds, _ := a.openDests(job, path.Join(a.jobDir(job), name))
+		ds[0].st.MkdirAll(ctx, ds[0].dir)
+		mb, _ := json.Marshal(model.Manifest{Status: model.RunSuccess})
+		ds[0].st.Put(ctx, path.Join(ds[0].dir, "manifest.json"), bytes.NewReader(mb), int64(len(mb)))
+	}
+	a.rotate(ctx, run, last, model.Retention{Weekly: 4, Monthly: 3}, false)
+	// Weeks: May 17, 10, 3, Apr 26; months: May (17), Apr (26), Mar (29).
+	if got, want := list(), "2026-03-29,2026-04-26,2026-05-03,2026-05-10,2026-05-17"; got != want {
+		t.Fatalf("calendar rotation left %s, want %s", got, want)
 	}
 }
 

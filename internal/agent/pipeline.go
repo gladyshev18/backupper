@@ -320,6 +320,27 @@ func (u *uploader) Abort(err error) {
 	u.release()
 }
 
+// Purge deletes the parts uploaded so far (and the one that failed) from every
+// destination. Call it after Finish or Abort.
+func (u *uploader) Purge() (int, int64) {
+	u.mu.Lock()
+	parts := append([]model.Part(nil), u.parts...)
+	if u.partNo > len(parts) {
+		parts = append(parts, model.Part{Name: fmt.Sprintf("%s.part%04d", u.file, u.partNo)})
+	}
+	u.mu.Unlock()
+	var size int64
+	for _, p := range parts {
+		for _, d := range u.dests {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			_ = d.st.Delete(ctx, path.Join(d.dir, p.Name))
+			cancel()
+		}
+		size += p.Size
+	}
+	return len(parts), size
+}
+
 func (u *uploader) putBackCur() {
 	if u.cur != nil {
 		u.free <- u.cur

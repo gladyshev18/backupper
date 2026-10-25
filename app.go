@@ -18,6 +18,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"backupper/internal/agent"
+	"backupper/internal/cms"
 	"backupper/internal/desktop"
 	"backupper/internal/model"
 	"backupper/internal/storage"
@@ -485,4 +486,57 @@ func (a *App) NextRuns(s model.Schedule, tzOffset int, count int) ([]string, err
 		out = append(out, t.Format(time.RFC3339))
 	}
 	return out, nil
+}
+
+// CMSPresets lists what "skip CMS caches and backups" leaves out of archives.
+func (a *App) CMSPresets() []cms.Preset { return cms.Presets }
+
+// RetentionPreview is the steady state of a retention policy: which copies stay
+// once the schedule has run long enough to fill every rule.
+type RetentionPreview struct {
+	Ages    []float64 `json:"ages"`    // days before the newest copy, newest first
+	Reasons []int     `json:"reasons"` // model.KeepReason bits per copy
+	Assumed bool      `json:"assumed"` // manual or invalid schedule: daily runs assumed
+}
+
+func (a *App) RetentionPreview(s model.Schedule, tzOffset int, r model.Retention) RetentionPreview {
+	var res RetentionPreview
+	r = r.Normalized()
+	if r.Empty() {
+		return res
+	}
+	var sched cron.Schedule
+	if s.Enabled {
+		if expr, err := s.CronExpr(); err == nil {
+			sched, _ = cron.ParseStandard(expr)
+		}
+	}
+	if sched == nil {
+		sched, _ = cron.ParseStandard("0 3 * * *")
+		res.Assumed = true
+	}
+	days := max(r.Daily+1, r.Weekly*7+7, r.Monthly*31+31, r.Yearly*366+366)
+	days = min(days, 20*366)
+	t := time.Now().In(time.FixedZone("server", tzOffset))
+	end := t.AddDate(0, 0, days)
+	var times []time.Time
+	for len(times) < 200000 {
+		t = sched.Next(t)
+		if t.IsZero() || (t.After(end) && len(times) > r.Last) {
+			break
+		}
+		times = append(times, t)
+	}
+	if len(times) == 0 {
+		return res
+	}
+	keep := r.Select(times)
+	newest := times[len(times)-1]
+	for i := len(times) - 1; i >= 0; i-- {
+		if keep[i] != 0 {
+			res.Ages = append(res.Ages, newest.Sub(times[i]).Hours()/24)
+			res.Reasons = append(res.Reasons, int(keep[i]))
+		}
+	}
+	return res
 }

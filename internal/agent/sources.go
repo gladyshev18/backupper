@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"backupper/internal/cms"
 	"backupper/internal/model"
 )
 
@@ -371,6 +372,22 @@ func planStreams(ctx context.Context, src model.Source, logf func(level, format 
 			}
 			argv = append(argv, "--exclude="+strings.TrimPrefix(ex, "/"))
 		}
+		if src.Type == model.SourceFiles && src.CMSExcludes {
+			abs := make([]string, len(rel))
+			for i, r := range rel {
+				abs[i] = "/" + r
+			}
+			sites := cms.Find(abs)
+			for _, s := range sites {
+				logf("info", "найден сайт %s: %s — его кэш и резервные копии не попадут в архив", s.Name, s.Path)
+			}
+			if len(sites) == 0 {
+				logf("info", "сайтов известных CMS в /%s не найдено — исключаются только шаблоны задачи", strings.Join(rel, ", /"))
+			}
+			for _, ex := range cms.TarExcludes(sites) {
+				argv = append(argv, "--exclude="+ex)
+			}
+		}
 		argv = append(argv, extra...)
 		argv = append(argv, "-C", "/")
 		argv = append(argv, rel...)
@@ -406,6 +423,8 @@ func Probe(ctx context.Context, src model.Source) model.ProbeResult {
 		}
 		if len(res.Paths) == 0 {
 			err = fmt.Errorf("ни один из путей не найден")
+		} else if src.Type == model.SourceFiles {
+			res.CMS = cms.Find(res.Paths)
 		}
 	default:
 		err = fmt.Errorf("неизвестный тип источника")

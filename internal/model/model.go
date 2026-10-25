@@ -61,6 +61,8 @@ type Source struct {
 	// Files / configs.
 	Paths    []string `json:"paths,omitempty"`
 	Excludes []string `json:"excludes,omitempty"`
+	// CMSExcludes finds sites of known CMS inside Paths and skips their caches and own backups.
+	CMSExcludes bool `json:"cmsExcludes,omitempty"`
 
 	Site *SiteSource `json:"site,omitempty"`
 }
@@ -177,17 +179,96 @@ func (c ChunkSettings) Normalized() ChunkSettings {
 	return c
 }
 
+// Retention decides which complete backups survive rotation (the GFS scheme):
+// Last keeps the newest N copies, Daily/Weekly/Monthly/Yearly keep the newest
+// copy of each of the last N days / ISO weeks / months / years that have one.
+// A copy kept by several rules is stored once.
+type Retention struct {
+	Last    int `json:"last"`
+	Daily   int `json:"daily"`
+	Weekly  int `json:"weekly"`
+	Monthly int `json:"monthly"`
+	Yearly  int `json:"yearly"`
+}
+
+// KeepReason is a bit set of the rules that keep a copy; 0 means delete.
+type KeepReason uint8
+
+const (
+	KeepLast KeepReason = 1 << iota
+	KeepDaily
+	KeepWeekly
+	KeepMonthly
+	KeepYearly
+)
+
+// Calendar reports whether any period rule is set (otherwise only Last matters).
+func (r Retention) Calendar() bool {
+	return r.Daily > 0 || r.Weekly > 0 || r.Monthly > 0 || r.Yearly > 0
+}
+
+func (r Retention) Empty() bool { return r.Last <= 0 && !r.Calendar() }
+
+func (r Retention) Normalized() Retention {
+	for _, v := range []*int{&r.Last, &r.Daily, &r.Weekly, &r.Monthly, &r.Yearly} {
+		*v = max(0, min(*v, 1000))
+	}
+	return r
+}
+
+// Select marks which of the backup times to keep. Times are wall-clock times of
+// the run folders; their order does not matter.
+func (r Retention) Select(times []time.Time) []KeepReason {
+	out := make([]KeepReason, len(times))
+	order := make([]int, len(times))
+	for i := range order {
+		order[i] = i
+	}
+	sort.SliceStable(order, func(a, b int) bool { return times[order[a]].After(times[order[b]]) })
+	for n, i := range order {
+		if n < r.Last {
+			out[i] |= KeepLast
+		}
+	}
+	bucket := func(limit int, flag KeepReason, key func(time.Time) int) {
+		seen := map[int]bool{}
+		for _, i := range order {
+			if len(seen) >= limit {
+				return
+			}
+			if k := key(times[i]); !seen[k] {
+				seen[k] = true
+				out[i] |= flag
+			}
+		}
+	}
+	bucket(r.Daily, KeepDaily, func(t time.Time) int { return t.Year()*1000 + t.YearDay() })
+	bucket(r.Weekly, KeepWeekly, func(t time.Time) int { y, w := t.ISOWeek(); return y*100 + w })
+	bucket(r.Monthly, KeepMonthly, func(t time.Time) int { return t.Year()*100 + int(t.Month()) })
+	bucket(r.Yearly, KeepYearly, func(t time.Time) int { return t.Year() })
+	return out
+}
+
 type Job struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
 	Sources     []Source      `json:"sources"`
 	Schedule    Schedule      `json:"schedule"`
 	Storages    []string      `json:"storages"`
-	Keep        int           `json:"keep"`
+	Keep        int           `json:"keep"` // simple "keep last N"; used when Retention is empty (jobs from 1.1 and older)
+	Retention   Retention     `json:"retention"`
 	Encrypt     bool          `json:"encrypt"`
 	Compression int           `json:"compression"` // gzip level 1..9
 	Chunk       ChunkSettings `json:"chunk"`
 	Notify      string        `json:"notify"` // errors | always | never
+}
+
+// Policy is the effective retention: the calendar scheme or the plain Keep count.
+func (j Job) Policy() Retention {
+	if j.Retention.Empty() {
+		return Retention{Last: j.Keep}
+	}
+	return j.Retention
 }
 
 const (
@@ -339,6 +420,7 @@ type JobView struct {
 	Job
 	NextRun   *time.Time `json:"nextRun,omitempty"`
 	LastRun   *Run       `json:"lastRun,omitempty"`
+	LastSize  int64      `json:"lastSize,omitempty"` // bytes of the last complete backup
 	CronError string     `json:"cronError,omitempty"`
 }
 
@@ -385,7 +467,15 @@ type ProbeResult struct {
 	Error     string    `json:"error,omitempty"`
 	Databases []string  `json:"databases,omitempty"`
 	Paths     []string  `json:"paths,omitempty"` // existing paths with sizes
+	CMS       []CMSSite `json:"cms,omitempty"`   // sites of known CMS found inside the paths
 	Site      *SiteInfo `json:"site,omitempty"`
+}
+
+// CMSSite is a site root recognised by its CMS files.
+type CMSSite struct {
+	Path string `json:"path"`
+	CMS  string `json:"cms"`  // preset id, e.g. "bitrix"
+	Name string `json:"name"` // human name, e.g. "1С-Битрикс"
 }
 
 // SiteInfo is what the PHP script reports about the hosting.

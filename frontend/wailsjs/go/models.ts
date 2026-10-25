@@ -1,3 +1,26 @@
+export namespace cms {
+	
+	export class Preset {
+	    id: string;
+	    name: string;
+	    markers: string[];
+	    excludes: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new Preset(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.markers = source["markers"];
+	        this.excludes = source["excludes"];
+	    }
+	}
+
+}
+
 export namespace desktop {
 	
 	export class Server {
@@ -103,6 +126,22 @@ export namespace desktop {
 
 export namespace main {
 	
+	export class RetentionPreview {
+	    ages: number[];
+	    reasons: number[];
+	    assumed: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RetentionPreview(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ages = source["ages"];
+	        this.reasons = source["reasons"];
+	        this.assumed = source["assumed"];
+	    }
+	}
 	export class ServerStatus {
 	    id: string;
 	    online: boolean;
@@ -444,6 +483,26 @@ export namespace model {
 	        this.buffer = source["buffer"];
 	    }
 	}
+	export class Retention {
+	    last: number;
+	    daily: number;
+	    weekly: number;
+	    monthly: number;
+	    yearly: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new Retention(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.last = source["last"];
+	        this.daily = source["daily"];
+	        this.weekly = source["weekly"];
+	        this.monthly = source["monthly"];
+	        this.yearly = source["yearly"];
+	    }
+	}
 	export class Schedule {
 	    enabled: boolean;
 	    mode: string;
@@ -523,6 +582,7 @@ export namespace model {
 	    extraArgs?: string;
 	    paths?: string[];
 	    excludes?: string[];
+	    cmsExcludes?: boolean;
 	    site?: SiteSource;
 	
 	    static createFrom(source: any = {}) {
@@ -543,6 +603,7 @@ export namespace model {
 	        this.extraArgs = source["extraArgs"];
 	        this.paths = source["paths"];
 	        this.excludes = source["excludes"];
+	        this.cmsExcludes = source["cmsExcludes"];
 	        this.site = this.convertValues(source["site"], SiteSource);
 	    }
 	
@@ -571,6 +632,7 @@ export namespace model {
 	    schedule: Schedule;
 	    storages: string[];
 	    keep: number;
+	    retention: Retention;
 	    encrypt: boolean;
 	    compression: number;
 	    chunk: ChunkSettings;
@@ -578,6 +640,7 @@ export namespace model {
 	    // Go type: time
 	    nextRun?: any;
 	    lastRun?: Run;
+	    lastSize?: number;
 	    cronError?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -592,12 +655,14 @@ export namespace model {
 	        this.schedule = this.convertValues(source["schedule"], Schedule);
 	        this.storages = source["storages"];
 	        this.keep = source["keep"];
+	        this.retention = this.convertValues(source["retention"], Retention);
 	        this.encrypt = source["encrypt"];
 	        this.compression = source["compression"];
 	        this.chunk = this.convertValues(source["chunk"], ChunkSettings);
 	        this.notify = source["notify"];
 	        this.nextRun = this.convertValues(source["nextRun"], null);
 	        this.lastRun = this.convertValues(source["lastRun"], Run);
+	        this.lastSize = source["lastSize"];
 	        this.cronError = source["cronError"];
 	    }
 	
@@ -820,6 +885,22 @@ export namespace model {
 		    return a;
 		}
 	}
+	export class CMSSite {
+	    path: string;
+	    cms: string;
+	    name: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CMSSite(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.cms = source["cms"];
+	        this.name = source["name"];
+	    }
+	}
 	export class ChunkPlan {
 	    size: number;
 	    buffer: string;
@@ -866,6 +947,7 @@ export namespace model {
 	    schedule: Schedule;
 	    storages: string[];
 	    keep: number;
+	    retention: Retention;
 	    encrypt: boolean;
 	    compression: number;
 	    chunk: ChunkSettings;
@@ -883,6 +965,7 @@ export namespace model {
 	        this.schedule = this.convertValues(source["schedule"], Schedule);
 	        this.storages = source["storages"];
 	        this.keep = source["keep"];
+	        this.retention = this.convertValues(source["retention"], Retention);
 	        this.encrypt = source["encrypt"];
 	        this.compression = source["compression"];
 	        this.chunk = this.convertValues(source["chunk"], ChunkSettings);
@@ -997,6 +1080,7 @@ export namespace model {
 	    error?: string;
 	    databases?: string[];
 	    paths?: string[];
+	    cms?: CMSSite[];
 	    site?: SiteInfo;
 	
 	    static createFrom(source: any = {}) {
@@ -1009,6 +1093,7 @@ export namespace model {
 	        this.error = source["error"];
 	        this.databases = source["databases"];
 	        this.paths = source["paths"];
+	        this.cms = this.convertValues(source["cms"], CMSSite);
 	        this.site = this.convertValues(source["site"], SiteInfo);
 	    }
 	
@@ -1030,6 +1115,7 @@ export namespace model {
 		    return a;
 		}
 	}
+	
 	
 	
 	

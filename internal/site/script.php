@@ -427,18 +427,25 @@ function bk_dump($root, array $p, BkBudget $budget)
 
 // ---------- files: tar stream built across requests ----------
 
-function bk_cms_excludes($cms)
+/** Folders of the presets (sent by the agent) whose CMS is detected in the site root. */
+function bk_cms_excludes($root, $cms, array $presets, array &$log)
 {
-    if ($cms === 'bitrix') {
-        return ['bitrix/cache', 'bitrix/managed_cache', 'bitrix/stack_cache', 'bitrix/html_pages', 'bitrix/backup', 'bitrix/tmp', 'upload/tmp', 'upload/resize_cache'];
+    $out = [];
+    foreach ($presets as $pr) {
+        $hit = ($pr['id'] ?? '') === $cms;
+        foreach ((array)($pr['markers'] ?? []) as $m) {
+            $hit = $hit || is_file("$root/$m");
+        }
+        if ($hit) {
+            $out = array_merge($out, (array)($pr['excludes'] ?? []));
+            $log[] = 'CMS ' . $pr['name'] . ': кэш и резервные копии не попадут в архив';
+        }
     }
-    if ($cms === 'wordpress') {
-        return ['wp-content/cache', 'wp-content/upgrade', 'wp-content/updraft', 'wp-content/ai1wm-backups', 'wp-content/backups-dup-lite', 'wp-content/backup-db', 'wp-content/uploads/backwpup*'];
-    }
-    return [];
+    return $out;
 }
 
-function bk_excluded($rel, $base, array $pats)
+/** User patterns without "/" match a name anywhere; CMS folders match from the root only. */
+function bk_excluded($rel, $base, array $pats, array $anchored)
 {
     foreach ($pats as $p) {
         if (strpos($p, '/') === false) {
@@ -446,6 +453,11 @@ function bk_excluded($rel, $base, array $pats)
                 return true;
             }
         } elseif (fnmatch($p, $rel)) {
+            return true;
+        }
+    }
+    foreach ($anchored as $p) {
+        if (fnmatch($p, $rel)) {
             return true;
         }
     }
@@ -457,7 +469,7 @@ function bk_list_path($root)
     return $root . '/' . basename(__FILE__, '.php') . '.list.php';
 }
 
-function bk_build_list($root, array $pats)
+function bk_build_list($root, array $pats, array $anchored)
 {
     $f = fopen(bk_list_path($root), 'wb');
     if (!$f) {
@@ -470,12 +482,12 @@ function bk_build_list($root, array $pats)
     $it = new RecursiveIteratorIterator(
         new RecursiveCallbackFilterIterator(
             new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS | FilesystemIterator::UNIX_PATHS | FilesystemIterator::CURRENT_AS_FILEINFO),
-            function ($fi) use ($root, $pats, &$skip) {
+            function ($fi) use ($root, $pats, $anchored, &$skip) {
                 $rel = ltrim(substr(str_replace('\\', '/', $fi->getPathname()), strlen($root)), '/');
                 if (strpos($fi->getFilename(), 'backupper_') === 0 && strpos($rel, '/') === false) {
                     return false;
                 }
-                if (bk_excluded($rel, $fi->getFilename(), $pats)) {
+                if (bk_excluded($rel, $fi->getFilename(), $pats, $anchored)) {
                     $skip++;
                     return false;
                 }
@@ -543,10 +555,11 @@ function bk_files($root, array $p, BkBudget $budget)
         $pats = array_values(array_filter(array_map(function ($x) {
             return trim(str_replace('\\', '/', $x), " /");
         }, (array)($p['exclude'] ?? []))));
+        $anchored = [];
         if (!empty($p['cmsExcludes'])) {
-            $pats = array_merge($pats, bk_cms_excludes($cms));
+            $anchored = bk_cms_excludes($root, $cms, (array)($p['presets'] ?? []), $log);
         }
-        list($count, $skip) = bk_build_list($root, $pats);
+        list($count, $skip) = bk_build_list($root, $pats, $anchored);
         $log[] = "в архив попадёт объектов: $count, исключено по шаблонам: $skip";
         $st = ['ph' => 'tar', 'lo' => 0, 'off' => 0, 'sz' => 0, 'n' => 0, 'skip' => 0];
         bk_send(['state' => $st, 'done' => false, 'raw' => 0, 'log' => $log]);

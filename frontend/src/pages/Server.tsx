@@ -8,7 +8,7 @@ import { api, onEvent } from '../api'
 import type { BackupEntry, JobView, Run, ServerCheck, ServerStatus } from '../types'
 import { Alert, Bar, Button, Empty, Menu, Modal, StatusBadge, usePoll, useUI } from '../components/ui'
 import RunProgress from '../components/RunProgress'
-import { bytes, cls, dateTime, duration, kindLabels, relative, scheduleText, sourceLabels } from '../util'
+import { bytes, cls, dateTime, duration, kindLabels, policy, relative, retentionText, scheduleText, sourceLabels } from '../util'
 import { locale, t } from '../i18n'
 import ServerForm from './ServerForm'
 import JobEditor from './JobEditor'
@@ -202,7 +202,7 @@ function JobsTab({ id, st, onEdit, refresh }: { id: string; st: ServerStatus; on
               <div className="row small muted mt8" style={{ gap: 16 }}>
                 <span className="row" style={{ gap: 5 }}><Clock size={13} /> {scheduleText(j.schedule)}</span>
                 {j.nextRun && <span>{t('следующий {when}', { when: relative(j.nextRun) })}</span>}
-                <span>{t('хранить {n}', { n: j.keep || '∞' })}</span>
+                <span>{t('хранить: {n}', { n: retentionText(policy(j)) })}</span>
               </div>
             </div>
             <div style={{ textAlign: 'right', minWidth: 150 }}>

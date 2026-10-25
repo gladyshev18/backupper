@@ -25,6 +25,11 @@ func TestExecuteFilesJob(t *testing.T) {
 	os.WriteFile(filepath.Join(site, "index.php"), []byte("<?php echo 1;"), 0o644)
 	os.WriteFile(filepath.Join(site, "error.log"), []byte("noise"), 0o644)
 	os.WriteFile(filepath.Join(site, "cache", "x.tmp"), []byte("cache"), 0o644)
+	// A Bitrix site one level down: its own backups and caches go, uploads stay.
+	for _, f := range []string{"www/bitrix/.settings.php", "www/bitrix/backup/full.tar.gz", "www/bitrix/managed_cache/m.php", "www/upload/iblock/photo.jpg"} {
+		os.MkdirAll(filepath.Dir(filepath.Join(site, f)), 0o755)
+		os.WriteFile(filepath.Join(site, f), []byte("x"), 0o644)
+	}
 	conf := t.TempDir()
 	os.WriteFile(filepath.Join(conf, "nginx.conf"), []byte("server {}"), 0o644)
 
@@ -34,7 +39,7 @@ func TestExecuteFilesJob(t *testing.T) {
 	job.Encrypt = false
 	job.Keep = 1
 	job.Sources = []model.Source{
-		{ID: "s1", Type: model.SourceFiles, Name: "site", Paths: []string{site}, Excludes: []string{"*.log", "*/cache/*"}},
+		{ID: "s1", Type: model.SourceFiles, Name: "site", Paths: []string{site}, Excludes: []string{"*.log", "*/cache/*"}, CMSExcludes: true},
 		{ID: "s2", Type: model.SourceConfigs, Name: "configs", Paths: []string{conf, "/etc/definitely-missing-dir"}},
 	}
 	a.state.update(func(c *Config) error { c.Jobs[0] = job; return nil })
@@ -71,7 +76,7 @@ func TestExecuteFilesJob(t *testing.T) {
 	}
 	gz, _ := gzip.NewReader(resp.Body)
 	tr := tar.NewReader(gz)
-	var names []string
+	var names, full []string
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
@@ -81,11 +86,23 @@ func TestExecuteFilesJob(t *testing.T) {
 			t.Fatal(err)
 		}
 		names = append(names, filepath.Base(h.Name))
+		full = append(full, h.Name)
 	}
 	sort.Strings(names)
 	joined := strings.Join(names, ",")
 	if !strings.Contains(joined, "index.php") || strings.Contains(joined, "error.log") || strings.Contains(joined, "x.tmp") {
 		t.Fatalf("unexpected archive content: %s", joined)
+	}
+	for _, want := range []string{".settings.php", "photo.jpg"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("%s missing: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "full.tar.gz") || strings.Contains(joined, "m.php") {
+		t.Fatalf("CMS backups/cache archived: %s", joined)
+	}
+	if !strings.Contains(strings.Join(full, ","), "www/bitrix/backup/,") {
+		t.Fatalf("empty bitrix/backup folder must stay: %v", full)
 	}
 	t.Logf("archive: %s", joined)
 	for _, l := range last.Log {

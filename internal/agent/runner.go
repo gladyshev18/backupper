@@ -207,6 +207,11 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 			return model.RunFailed, fmt.Sprintf("облако %s: %v", d.id, err)
 		}
 	}
+	if need := a.state.LastBytes(job.ID); need > 0 {
+		for _, d := range dests {
+			a.checkSpace(ctx, run, d, need, job.Policy())
+		}
+	}
 
 	var recipient age.Recipient
 	if job.Encrypt {
@@ -308,9 +313,9 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 		}
 	}
 
-	if status != model.RunFailed && job.Keep > 0 {
+	if pol := job.Policy(); status != model.RunFailed && !pol.Empty() {
 		for _, d := range dests {
-			a.rotate(ctx, run, d, job.Keep)
+			a.rotate(ctx, run, d, pol, false)
 		}
 	}
 
@@ -345,8 +350,8 @@ func (a *Agent) cleanupDir(dests []dest) {
 }
 
 // runStream runs one dump command and streams it compressed (and encrypted) to the clouds.
-func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name string, dests []dest, plan model.ChunkPlan, level int, recipient age.Recipient) (model.RunFile, bool) {
-	rf := model.RunFile{Name: name}
+func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name string, dests []dest, plan model.ChunkPlan, level int, recipient age.Recipient) (rf model.RunFile, warn bool) {
+	rf = model.RunFile{Name: name}
 	a.logf(run, "info", "%s → %s", s.label, name)
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -354,6 +359,15 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 	var mu sync.Mutex
 	lastT, lastB := time.Now(), int64(0)
 	up := newUploader(ctx, dests, name, plan, func(l, f string, args ...any) { a.logf(run, l, f, args...) })
+	// Parts of a broken file cannot be restored and only take cloud space
+	// (a cancelled run removes its whole folder instead).
+	defer func() {
+		if rf.Error != "" && parent.Err() == nil {
+			if n, size := up.Purge(); n > 0 {
+				a.logf(run, "info", "%s: удалены уже загруженные части (%d шт., %s) — без остальных они бесполезны", name, n, chunk.HumanBytes(size))
+			}
+		}
+	}()
 	up.onUp = func(id string, n int64, d time.Duration) {
 		a.state.WithRun(run, func(r *model.Run) {
 			st := r.Uploads[id]
@@ -476,8 +490,11 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 	return rf, warn
 }
 
-// rotate keeps the newest `keep` complete backups and removes older or broken ones.
-func (a *Agent) rotate(ctx context.Context, run *model.Run, d dest, keep int) {
+// rotate applies the job's retention policy to its folder in one cloud: complete
+// copies kept by no rule and broken ones are removed. Before the upload (early)
+// it only frees space and spares the newest complete copy, because the current
+// run may still fail. It returns the number of removed folders.
+func (a *Agent) rotate(ctx context.Context, run *model.Run, d dest, pol model.Retention, early bool) int {
 	jobDir := path.Dir(d.dir)
 	current := path.Base(d.dir)
 	lctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -485,44 +502,115 @@ func (a *Agent) rotate(ctx context.Context, run *model.Run, d dest, keep int) {
 	cancel()
 	if err != nil {
 		a.logf(run, "warn", "ротация в %s: %v", a.storageName(d.id), err)
-		return
+		return 0
 	}
-	var dirs []string
+	type folder struct {
+		name string
+		t    time.Time
+		good bool
+	}
+	var dirs []folder
 	for _, e := range entries {
 		if e.IsDir {
-			if _, err := time.Parse(runDirLayout, e.Name); err == nil {
-				dirs = append(dirs, e.Name)
+			if t, err := time.Parse(runDirLayout, e.Name); err == nil {
+				dirs = append(dirs, folder{name: e.Name, t: t})
 			}
 		}
 	}
-	sort.Sort(sort.Reverse(sort.StringSlice(dirs)))
-	good := 0
-	removed := 0
-	for _, name := range dirs {
-		ok := name == current
-		if !ok {
-			man, err := readManifest(ctx, d.st, path.Join(jobDir, name))
-			ok = err == nil && (man.Status == model.RunSuccess || man.Status == model.RunWarning)
-		}
-		// Broken runs newer than the current one cannot exist; older broken ones go.
-		if ok {
-			good++
-			if good <= keep {
-				continue
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].t.After(dirs[j].t) })
+	var times []time.Time
+	var goodIdx []int
+	spare := -1 // the newest complete copy besides the current one
+	for i := range dirs {
+		f := &dirs[i]
+		f.good = f.name == current
+		if !f.good {
+			man, err := readManifest(ctx, d.st, path.Join(jobDir, f.name))
+			f.good = err == nil && (man.Status == model.RunSuccess || man.Status == model.RunWarning)
+			if f.good && spare < 0 {
+				spare = i
 			}
 		}
+		if f.good {
+			goodIdx = append(goodIdx, i)
+			times = append(times, f.t)
+		}
+	}
+	keep := make([]model.KeepReason, len(dirs))
+	for k, r := range pol.Select(times) {
+		keep[goodIdx[k]] = r
+	}
+	if early && spare >= 0 && keep[spare] == 0 {
+		keep[spare] = model.KeepLast
+	}
+	// Broken runs newer than the current one cannot exist; older broken ones go.
+	removed := 0
+	var kept [5]int
+	for i, f := range dirs {
+		if f.name == current || keep[i] != 0 {
+			for b := range kept {
+				if keep[i]&(1<<b) != 0 {
+					kept[b]++
+				}
+			}
+			continue
+		}
 		dctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		err := d.st.Delete(dctx, path.Join(jobDir, name))
+		err := d.st.Delete(dctx, path.Join(jobDir, f.name))
 		cancel()
 		if err != nil {
-			a.logf(run, "warn", "не удалось удалить старую копию %s: %v", name, err)
+			a.logf(run, "warn", "не удалось удалить старую копию %s: %v", f.name, err)
 			continue
 		}
 		removed++
 	}
-	if removed > 0 {
-		a.logf(run, "info", "Ротация %s: удалено старых копий: %d, осталось: %d", a.storageName(d.id), removed, min(good, keep))
+	if removed == 0 {
+		return 0
 	}
+	if early {
+		a.logf(run, "info", "Освобождаю место в %s заранее: удалено копий, которые всё равно ушли бы после бэкапа: %d", a.storageName(d.id), removed)
+		return removed
+	}
+	detail := ""
+	if pol.Calendar() {
+		var by []string
+		for b, label := range []string{"последних", "дневных", "недельных", "месячных", "годовых"} {
+			if kept[b] > 0 {
+				by = append(by, fmt.Sprintf("%s: %d", label, kept[b]))
+			}
+		}
+		detail = " (" + strings.Join(by, ", ") + ")"
+	}
+	a.logf(run, "info", "Ротация %s: удалено старых копий: %d, хранится: %d%s", a.storageName(d.id), removed, len(dirs)-removed, detail)
+	return removed
+}
+
+// checkSpace compares free cloud space with the size of the previous copy. When
+// it is short, copies the retention would delete after this run go right away.
+func (a *Agent) checkSpace(ctx context.Context, run *model.Run, d dest, need int64, pol model.Retention) {
+	free := func() (int64, bool) {
+		qctx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		q, err := d.st.Quota(qctx)
+		if err != nil || q.Total <= 0 {
+			return 0, false
+		}
+		return q.Total - q.Used, true
+	}
+	want := need + need/10
+	f, ok := free()
+	if !ok || f >= want {
+		return
+	}
+	name := a.storageName(d.id)
+	a.logf(run, "warn", "В %s свободно %s, а прошлая копия заняла %s", name, chunk.HumanBytes(f), chunk.HumanBytes(need))
+	if !pol.Empty() && a.rotate(ctx, run, d, pol, true) > 0 {
+		if f, ok = free(); ok && f >= want {
+			a.logf(run, "info", "Теперь в %s свободно %s — должно хватить", name, chunk.HumanBytes(f))
+			return
+		}
+	}
+	a.logf(run, "warn", "Места в %s может не хватить: освободите облако или храните меньше копий. Если архив стал меньше прошлого (например, после новых исключений), бэкап пройдёт", name)
 }
 
 func readManifest(ctx context.Context, st storage.Storage, dir string) (model.Manifest, error) {

@@ -196,7 +196,7 @@ func (a *Agent) JobViews() []model.JobView {
 	cfg := a.state.Config()
 	out := []model.JobView{}
 	for _, j := range sortedJobs(cfg.Jobs) {
-		v := model.JobView{Job: j, NextRun: a.NextRun(j.ID), LastRun: a.state.LastFinished(j.ID)}
+		v := model.JobView{Job: j, NextRun: a.NextRun(j.ID), LastRun: a.state.LastFinished(j.ID), LastSize: a.state.LastBytes(j.ID)}
 		if j.Schedule.Enabled {
 			expr, err := j.Schedule.CronExpr()
 			if err == nil {
