@@ -59,7 +59,11 @@ func (a *Agent) notify(job model.Job, run *model.Run) {
 	title := map[string]string{model.RunSuccess: "Бэкап выполнен", model.RunWarning: "Бэкап с предупреждениями", model.RunFailed: "Бэкап не выполнен", model.RunCanceled: "Бэкап отменён"}[run.Status]
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s <b>%s</b>\n", icon, title)
-	fmt.Fprintf(&b, "Сервер: <b>%s</b>\nЗадача: %s\n", html.EscapeString(a.serverName()), html.EscapeString(job.Name))
+	if job.Kind == model.JobSite {
+		fmt.Fprintf(&b, "Сайт: <b>%s</b>\nЧерез сервер: %s\n", html.EscapeString(job.Name), html.EscapeString(a.serverName()))
+	} else {
+		fmt.Fprintf(&b, "Сервер: <b>%s</b>\nЗадача: %s\n", html.EscapeString(a.serverName()), html.EscapeString(job.Name))
+	}
 	fmt.Fprintf(&b, "Длительность: %s, объём: %s\n", ruDuration(run.FinishedAt.Sub(run.StartedAt)), chunk.HumanBytes(run.Bytes))
 	if run.Error != "" {
 		e := run.Error

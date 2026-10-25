@@ -8,7 +8,7 @@ import { api, onEvent } from '../api'
 import type { BackupEntry, JobView, Run, ServerCheck, ServerStatus } from '../types'
 import { Alert, Bar, Button, Empty, Menu, Modal, StatusBadge, usePoll, useUI } from '../components/ui'
 import RunProgress from '../components/RunProgress'
-import { bytes, cls, dateTime, duration, kindLabels, policy, relative, retentionText, scheduleText, sourceLabels } from '../util'
+import { bytes, cls, dateTime, duration, kindLabels, policy, relative, retentionText, scheduleText, siteHost, sourceLabels } from '../util'
 import { locale, t } from '../i18n'
 import ServerForm from './ServerForm'
 import JobEditor from './JobEditor'
@@ -49,6 +49,9 @@ export default function ServerPage({ id }: { id: string }) {
   }, t('Агент установлен и запущен'))
 
   const info = st?.info
+  // Hosting sites relayed by this server have their own pages (menu "Сайты на хостинге").
+  const jobs = info?.jobs.filter(j => j.kind !== 'site') || []
+  const sites = info?.jobs.filter(j => j.kind === 'site') || []
 
   return (
     <div className="page">
@@ -93,12 +96,18 @@ export default function ServerPage({ id }: { id: string }) {
             </div>
           )}
           <div className="tabs">
-            <button className={cls(tab === 'jobs' && 'on')} onClick={() => setTab('jobs')}><Archive size={15} /> {t('Задачи')} <span className="faint">{info.jobs.length}</span></button>
+            <button className={cls(tab === 'jobs' && 'on')} onClick={() => setTab('jobs')}><Archive size={15} /> {t('Задачи')} <span className="faint">{jobs.length}</span></button>
             <button className={cls(tab === 'history' && 'on')} onClick={() => setTab('history')}><History size={15} /> {t('История')}</button>
             <button className={cls(tab === 'backups' && 'on')} onClick={() => setTab('backups')}><FileArchive size={15} /> {t('Копии в облаке')}</button>
             <button className={cls(tab === 'system' && 'on')} onClick={() => setTab('system')}><Cpu size={15} /> {t('Сервер')}</button>
           </div>
-          {tab === 'jobs' && <JobsTab id={id} st={st} onEdit={setJob} refresh={refresh} />}
+          {tab === 'jobs' && <JobsTab id={id} st={st} jobs={jobs} onEdit={setJob} refresh={refresh} />}
+          {tab === 'jobs' && sites.length > 0 && (
+            <div className="row wrap small muted mt16" style={{ gap: 6 }}>
+              <Globe size={14} /> {t('Через этот сервер также сохраняются сайты на хостинге:')}
+              {sites.map(j => <button key={j.id} className="chip" style={{ cursor: 'pointer' }} onClick={() => go({ page: 'site', server: id, job: j.id })}>{j.name}</button>)}
+            </div>
+          )}
           {tab === 'history' && <HistoryTab id={id} jobs={info.jobs} />}
           {tab === 'backups' && <BackupsTab id={id} jobs={info.jobs} />}
           {tab === 'system' && <SystemTab st={st} />}
@@ -106,7 +115,7 @@ export default function ServerPage({ id }: { id: string }) {
       )}
 
       {editing && <ServerForm server={server} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); refresh() }} />}
-      {job && st?.info && <JobEditor serverId={id} sys={st.info.sys} notes={st.info.storageNotes} job={job === 'new' ? null : job} onClose={() => setJob(null)} onSaved={() => { setJob(null); refresh() }} />}
+      {job && st?.info && <JobEditor serverId={id} job={job === 'new' ? null : job} onClose={() => setJob(null)} onSaved={() => { setJob(null); refresh() }} />}
     </div>
   )
 }
@@ -164,10 +173,9 @@ function InstallPanel({ id, status, onInstall, installing, onEdit, onRetry }: {
 
 const sourceIcon = (type: string) => type === 'mysql' || type === 'postgres' ? <Database size={14} /> : type === 'configs' ? <Settings2 size={14} /> : type === 'site' ? <Globe size={14} /> : <FolderTree size={14} />
 
-function JobsTab({ id, st, onEdit, refresh }: { id: string; st: ServerStatus; onEdit: (j: JobView | 'new') => void; refresh: () => Promise<void> }) {
+function JobsTab({ id, st, jobs, onEdit, refresh }: { id: string; st: ServerStatus; jobs: JobView[]; onEdit: (j: JobView | 'new') => void; refresh: () => Promise<void> }) {
   const { state } = useApp()
   const { run, busy, confirm } = useUI()
-  const jobs = st.info!.jobs
   if (!jobs.length) {
     return (
       <div className="card">
@@ -196,7 +204,7 @@ function JobsTab({ id, st, onEdit, refresh }: { id: string; st: ServerStatus; on
                 {j.cronError && <span className="badge danger">{j.cronError}</span>}
               </div>
               <div className="row wrap mt8" style={{ gap: 6 }}>
-                {j.sources.map(s => <span key={s.id} className="chip">{sourceIcon(s.type)} {t(sourceLabels[s.type])}{s.type === 'files' && s.paths?.[0] ? `: ${s.paths[0]}${s.paths.length > 1 ? ' …' : ''}` : ''}{s.type === 'site' && s.site?.url ? `: ${s.site.url.replace(/^https?:\/\//, '')}` : ''}</span>)}
+                {j.sources.map(s => <span key={s.id} className="chip">{sourceIcon(s.type)} {t(sourceLabels[s.type])}{s.type === 'files' && s.paths?.[0] ? `: ${s.paths[0]}${s.paths.length > 1 ? ' …' : ''}` : ''}{s.type === 'site' && s.site?.url ? `: ${siteHost(s.site.url)}` : ''}</span>)}
                 <span className="chip">→ {j.storages.map(sid => state.storages.find(s => s.id === sid)?.name || '?').join(', ')}</span>
               </div>
               <div className="row small muted mt8" style={{ gap: 16 }}>
@@ -220,20 +228,21 @@ function JobsTab({ id, st, onEdit, refresh }: { id: string; st: ServerStatus; on
   )
 }
 
-function HistoryTab({ id, jobs }: { id: string; jobs: JobView[] }) {
-  const [jobId, setJobId] = useState('')
+/** Runs of the server's jobs; `fixed` shows only the first job (a site page). */
+export function HistoryTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; fixed?: boolean }) {
+  const [jobId, setJobId] = useState(fixed ? jobs[0].id : '')
   const [runs, setRuns] = useState<Run[] | null>(null)
   const [open, setOpen] = useState<Run | null>(null)
   usePoll(() => { api.runs(id, jobId, 100).then(setRuns).catch(() => {}) }, 10000, [id, jobId])
   const show = async (r: Run) => setOpen(await api.run(id, r.id))
   return (
     <>
-      <div className="row" style={{ marginBottom: 12 }}>
+      {!fixed && <div className="row" style={{ marginBottom: 12 }}>
         <select className="select" style={{ width: 260 }} value={jobId} onChange={e => setJobId(e.target.value)}>
           <option value="">{t('Все задачи')}</option>
           {jobs.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
         </select>
-      </div>
+      </div>}
       <div className="card">
         {!runs ? <div className="card-pad"><Bar value={0} indeterminate /></div> : runs.length === 0 ? <div className="empty small">{t('Запусков пока не было')}</div> : (
           <table className="table">
@@ -298,7 +307,7 @@ function RunDetails({ run, onClose }: { run: Run; onClose: () => void }) {
   )
 }
 
-function BackupsTab({ id, jobs }: { id: string; jobs: JobView[] }) {
+export function BackupsTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; fixed?: boolean }) {
   const { state } = useApp()
   const { run, busy, confirm, toast } = useUI()
   const [jobId, setJobId] = useState(jobs[0]?.id || '')
@@ -333,9 +342,9 @@ function BackupsTab({ id, jobs }: { id: string; jobs: JobView[] }) {
   return (
     <>
       <div className="row wrap" style={{ marginBottom: 12 }}>
-        <select className="select" style={{ width: 240 }} value={jobId} onChange={e => setJobId(e.target.value)}>
+        {!fixed && <select className="select" style={{ width: 240 }} value={jobId} onChange={e => setJobId(e.target.value)}>
           {jobs.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
-        </select>
+        </select>}
         <select className="select" style={{ width: 240 }} value={storageId} onChange={e => setStorageId(e.target.value)}>
           {job?.storages.map(sid => <option key={sid} value={sid}>{state.storages.find(s => s.id === sid)?.name || sid}</option>)}
         </select>

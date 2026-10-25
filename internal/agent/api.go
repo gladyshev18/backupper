@@ -121,6 +121,15 @@ func validateJob(j *model.Job, others []model.Job) error {
 	if len(j.Sources) == 0 {
 		return errors.New("добавьте хотя бы один источник")
 	}
+	switch j.Kind {
+	case "":
+	case model.JobSite:
+		if len(j.Sources) != 1 || j.Sources[0].Type != model.SourceSite || j.Sources[0].Site == nil {
+			return errors.New("в задаче сайта должен быть ровно один источник — сайт на хостинге")
+		}
+	default:
+		return fmt.Errorf("неизвестный вид задачи %q", j.Kind)
+	}
 	if len(j.Storages) == 0 {
 		return errors.New("выберите хотя бы одно облако")
 	}

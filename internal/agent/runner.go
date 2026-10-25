@@ -43,8 +43,12 @@ func (a *Agent) serverName() string {
 	return h
 }
 
-// JobDir is the job's folder relative to the storage root.
+// JobDir is the job's folder relative to the storage root: <server>/<job>,
+// or sites/<site> for a hosting site (it does not belong to the relaying server).
 func (a *Agent) jobDir(job model.Job) string {
+	if job.Kind == model.JobSite {
+		return path.Join(model.SitesFolder, Slug(job.Name))
+	}
 	return path.Join(Slug(a.serverName()), Slug(job.Name))
 }
 

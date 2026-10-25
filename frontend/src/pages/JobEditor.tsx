@@ -1,29 +1,44 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import {
   Archive, CalendarRange, ChevronDown, ChevronRight, Database, FolderTree, Gauge, Globe, HardDrive, Lock, MemoryStick, Search,
-  Settings2, Sparkles, Timer, Trash2, Zap,
+  Server as ServerIcon, Settings2, Sparkles, Timer, Trash2, Zap,
 } from 'lucide-react'
 import SiteEditor from './SiteEditor'
 import { useApp } from '../App'
 import { api, cmsPresets, errText } from '../api'
-import type { ChunkPlan, CMSPreset, Job, JobView, ProbeResult, Retention, RetentionPreview, Source, SysInfo } from '../types'
+import type { ChunkPlan, CMSPreset, Job, JobView, ProbeResult, Retention, RetentionPreview, ServerStatus, Source, SysInfo } from '../types'
 import { KEEP_DAILY, KEEP_LAST, KEEP_MONTHLY, KEEP_WEEKLY, KEEP_YEARLY } from '../types'
 import { Alert, Bar, Button, Field, Modal, Seg, Toggle, useUI } from '../components/ui'
 import {
-  ageText, bytes, cls, configPresets, isCalendar, kindLabels, newJob, newSource, policy, seconds, sourceLabels, speed,
+  ageText, bytes, cls, configPresets, isCalendar, kindLabels, newJob, newSiteJob, newSource, policy, seconds, siteHost, sourceLabels, speed,
 } from '../util'
 import { getLang, locale, t } from '../i18n'
 
 // Same "round" sizes as the agent's planner (internal/chunk).
 const SIZES_MB = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048]
 
-export default function JobEditor({ serverId, sys, notes, job, onClose, onSaved }: {
-  serverId: string; sys: SysInfo; notes?: Record<string, string>; job: JobView | null; onClose: () => void; onSaved: () => void
+/** A server whose agent can take a hosting site: on line and up to date (older agents drop Job.kind). */
+export const canRelay = (st?: ServerStatus) => !!st?.online && !!st.info && !st.outdated
+
+/**
+ * Editor of a server job or, with `site`, of a site on hosting: one site source and
+ * the server whose agent relays it (serverId may be empty for a new site).
+ */
+export default function JobEditor({ serverId, job, site, onClose, onSaved }: {
+  serverId: string; job: JobView | null; site?: boolean; onClose: () => void; onSaved: (serverId: string, jobId: string) => void
 }) {
-  const { state, go } = useApp()
+  const { state, statuses, go, addServer } = useApp()
   const { run, busy } = useUI()
-  const [j, setJ] = useState<Job>(() => job ? { ...structuredClone(job), retention: policy(job) } : newJob(state.storages.slice(0, 1).map(s => s.id)))
+  const storages = state.storages.slice(0, 1).map(s => s.id)
+  const [j, setJ] = useState<Job>(() => job ? { ...structuredClone(job), retention: policy(job) } : site ? newSiteJob(storages) : newJob(storages))
   const set = (p: Partial<Job>) => setJ(v => ({ ...v, ...p }))
+  const relays = state.servers.filter(s => canRelay(statuses[s.id]))
+  const [sid, setSid] = useState(serverId || relays[0]?.id || '')
+  // Statuses may arrive after the form opens: pick the first suitable server then.
+  useEffect(() => { if (!sid && relays.length) setSid(relays[0].id) }, [relays.length])
+  const info = statuses[sid]?.info
+  const sys = info?.sys
+  const notes = info?.storageNotes
   const [open, setOpen] = useState<string | null>(job ? null : 'new')
   // Telegram takes encrypted copies only (the agent refuses others too).
   const telegram = state.storages.filter(s => s.kind === 'telegram' && j.storages.includes(s.id))
@@ -36,9 +51,23 @@ export default function JobEditor({ serverId, sys, notes, job, onClose, onSaved 
   const save = () => run('save', async () => {
     const { nextRun, lastRun, lastSize, cronError, ...clean } = j as JobView
     clean.keep = isCalendar(clean.retention) ? 0 : clean.retention.last
-    await api.saveJob(serverId, clean)
-    onSaved()
-  }, job ? t('Задача сохранена') : t('Задача создана'))
+    if (job && sid !== serverId) {
+      // A site moved to another server: create it there first, then drop the old one.
+      const saved = await api.saveJob(sid, { ...clean, id: '' })
+      await api.deleteJob(serverId, job.id)
+      onSaved(sid, saved.id)
+      return
+    }
+    const saved = await api.saveJob(sid, clean)
+    onSaved(sid, saved.id)
+  }, site ? (job ? t('Сайт сохранён') : t('Сайт добавлен')) : job ? t('Задача сохранена') : t('Задача создана'))
+
+  // The name follows the site address until it is edited by hand.
+  const updSite = (p: Partial<Source>) => {
+    const src = { ...j.sources[0], ...p }
+    const auto = !j.name || j.name === siteHost(j.sources[0].site?.url)
+    set(auto ? { sources: [src], name: siteHost(src.site?.url) } : { sources: [src] })
+  }
 
   const addSource = (type: Source['type']) => {
     const s = newSource(type)
@@ -51,13 +80,27 @@ export default function JobEditor({ serverId, sys, notes, job, onClose, onSaved 
   const updSource = (id: string, p: Partial<Source>) => set({ sources: j.sources.map(s => s.id === id ? { ...s, ...p } : s) })
 
   return (
-    <Modal drawer title={job ? t('Задача «{name}»', { name: job.name }) : t('Новая задача')} icon={<div className="job-icon" style={{ width: 34, height: 34 }}><Archive size={17} /></div>} onClose={onClose}
+    <Modal drawer onClose={onClose}
+      title={site ? (job ? t('Сайт «{name}»', { name: job.name }) : t('Новый сайт на хостинге')) : job ? t('Задача «{name}»', { name: job.name }) : t('Новая задача')}
+      icon={<div className="job-icon" style={{ width: 34, height: 34 }}>{site ? <Globe size={17} /> : <Archive size={17} />}</div>}
       footer={<>
-        <span className="small faint grow">{t('Задача хранится на сервере и выполняется агентом, даже когда панель закрыта.')}</span>
+        <span className="small faint grow">{site ? t('Бэкап делает агент на выбранном сервере, даже когда панель закрыта.') : t('Задача хранится на сервере и выполняется агентом, даже когда панель закрыта.')}</span>
         <Button onClick={onClose}>{t('Отмена')}</Button>
-        <Button variant="primary" loading={busy === 'save'} onClick={save}>{job ? t('Сохранить') : t('Создать задачу')}</Button>
+        <Button variant="primary" loading={busy === 'save'} disabled={!sys} onClick={save}>{job ? t('Сохранить') : site ? t('Добавить сайт') : t('Создать задачу')}</Button>
       </>}>
 
+      {site ? <>
+        <div className="editor-section">
+          <h3><span className="num">1</span> {t('Сайт')}</h3>
+          <div className="col">
+            <SiteEditor serverId={sid} src={j.sources[0]} onChange={updSite} />
+            <Field label={t('Название')} hint={t('Копии лежат в облаке в отдельной папке сайта: sites/{name}', { name: j.name || '…' })}>
+              <input className="input" value={j.name} onChange={e => set({ name: e.target.value })} placeholder="shop.ru" />
+            </Field>
+          </div>
+        </div>
+        <RelaySection sid={sid} setSid={setSid} moved={!!job && sid !== serverId} onAddServer={() => { onClose(); addServer() }} />
+      </> : <>
       <div className="editor-section">
         <h3><span className="num">1</span> {t('Название')}</h3>
         <input className="input" value={j.name} onChange={e => set({ name: e.target.value })} placeholder={t('Например: Магазин — база и файлы')} autoFocus={!job} />
@@ -80,7 +123,9 @@ export default function JobEditor({ serverId, sys, notes, job, onClose, onSaved 
           <button onClick={() => addSource('site')}><Globe size={20} /> {t('Сайт на хостинге (FTP)')}</button>
         </div>
       </div>
+      </>}
 
+      {sys && <>
       <ScheduleSection j={j} set={set} sys={sys} />
 
       <div className="editor-section">
@@ -129,8 +174,39 @@ export default function JobEditor({ serverId, sys, notes, job, onClose, onSaved 
         </div>
       </div>
 
-      <ChunkSection serverId={serverId} j={j} set={set} />
+      <ChunkSection serverId={sid} j={j} set={set} />
+      </>}
     </Modal>
+  )
+}
+
+/** "Через сервер": the agent that logs in to the hosting and uploads the copies. */
+function RelaySection({ sid, setSid, moved, onAddServer }: { sid: string; setSid: (id: string) => void; moved: boolean; onAddServer: () => void }) {
+  const { state, statuses } = useApp()
+  const why = (st?: ServerStatus) => !st ? t('подключение…') : !st.online ? (st.noAgent ? t('агент не установлен') : t('нет связи')) : st.outdated ? t('обновите агент') : ''
+  return (
+    <div className="editor-section">
+      <h3><span className="num">2</span> {t('Через сервер')}</h3>
+      {state.servers.length === 0 ? (
+        <Alert tone="warning">
+          {t('Бэкап сайта делает агент на одном из ваших Linux-серверов: он заходит на хостинг по FTP и выгружает копии в облако. Сначала добавьте сервер и установите на него агент.')}
+          <div className="mt8"><Button size="sm" icon={<ServerIcon size={14} />} onClick={onAddServer}>{t('Добавить сервер')}</Button></div>
+        </Alert>
+      ) : <>
+        <select className="select" style={{ maxWidth: 420 }} value={sid} onChange={e => setSid(e.target.value)}>
+          {!sid && <option value="">{t('Нет подходящего сервера')}</option>}
+          {state.servers.map(s => {
+            const off = why(statuses[s.id])
+            return <option key={s.id} value={s.id} disabled={!!off}>{s.name} · {s.host}{off ? ` — ${off}` : ''}</option>
+          })}
+        </select>
+        <div className="hint small faint mt8">
+          {t('Агент этого сервера заходит на хостинг и выгружает копии в облако. Подойдёт любой сервер: от него зависят только скорость и расписание, а копии сайта лежат в своей папке.')}
+        </div>
+        {moved && <div className="mt8"><Alert>{t('Сайт переедет на другой сервер. Копии в облаке останутся на месте, а история запусков — на прежнем сервере.')}</Alert></div>}
+        {!sid && <div className="mt8"><Alert tone="warning">{t('Нужен сервер на связи с агентом версии {v}. Откройте сервер в меню слева, чтобы установить или обновить агент.', { v: state.version })}</Alert></div>}
+      </>}
+    </div>
   )
 }
 

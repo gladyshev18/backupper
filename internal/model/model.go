@@ -249,9 +249,18 @@ func (r Retention) Select(times []time.Time) []KeepReason {
 	return out
 }
 
+// JobSite marks a job made in the panel's "Sites on hosting" section: one site
+// source, its copies live in SitesFolder/<site> rather than under the server.
+const JobSite = "site"
+
+// SitesFolder is the cloud folder (below the storage root) of hosting-site jobs,
+// shared by all agents, so a site keeps its copies when moved to another server.
+const SitesFolder = "sites"
+
 type Job struct {
 	ID          string        `json:"id"`
 	Name        string        `json:"name"`
+	Kind        string        `json:"kind,omitempty"` // "" (server job) | JobSite
 	Sources     []Source      `json:"sources"`
 	Schedule    Schedule      `json:"schedule"`
 	Storages    []string      `json:"storages"`

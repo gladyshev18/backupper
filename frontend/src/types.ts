@@ -72,6 +72,8 @@ export interface RetentionPreview { ages: number[] | null; reasons: number[] | n
 export interface Job {
   id: string
   name: string
+  /** 'site' — a site from the "Sites on hosting" section: one site source, copies in sites/<name>. */
+  kind?: 'site'
   sources: Source[]
   schedule: Schedule
   storages: string[]

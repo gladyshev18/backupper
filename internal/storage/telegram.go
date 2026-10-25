@@ -884,7 +884,11 @@ func (t *Telegram) tocText(server string) string {
 	sort.Strings(keys)
 	build := func(limit int) string {
 		var b strings.Builder
-		fmt.Fprintf(&b, "🗂 <b>Бэкапы сервера %s</b>\n<i>обновлено %s</i>\n", html.EscapeString(server), time.Now().Format("02.01.2006 15:04"))
+		if server == model.SitesFolder {
+			fmt.Fprintf(&b, "🗂 <b>Бэкапы сайтов на хостинге</b>\n<i>обновлено %s</i>\n", time.Now().Format("02.01.2006 15:04"))
+		} else {
+			fmt.Fprintf(&b, "🗂 <b>Бэкапы сервера %s</b>\n<i>обновлено %s</i>\n", html.EscapeString(server), time.Now().Format("02.01.2006 15:04"))
+		}
 		for _, k := range keys {
 			name := names[k]
 			if name == "" {

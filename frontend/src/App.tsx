@@ -1,7 +1,7 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { Cloud, Info, LayoutDashboard, Plus, Server as ServerIcon, Settings as SettingsIcon, ShieldCheck } from 'lucide-react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { Cloud, Globe, Info, LayoutDashboard, Plus, Server as ServerIcon, Settings as SettingsIcon, ShieldCheck } from 'lucide-react'
 import { api } from './api'
-import type { AppState, ServerStatus } from './types'
+import type { AppState, JobView, ServerStatus } from './types'
 import { UIProvider, usePoll } from './components/ui'
 import { cls } from './util'
 import { defaultLang, setLang, t } from './i18n'
@@ -11,8 +11,11 @@ import Clouds from './pages/Clouds'
 import SettingsPage from './pages/Settings'
 import ServerForm from './pages/ServerForm'
 import About from './pages/About'
+import SitePage from './pages/Site'
+import JobEditor from './pages/JobEditor'
 
 export type Route = { page: 'overview' } | { page: 'clouds' } | { page: 'settings' } | { page: 'about' } | { page: 'server'; id: string }
+  | { page: 'site'; server: string; job: string }
 
 interface AppCtx {
   state: AppState
@@ -22,6 +25,7 @@ interface AppCtx {
   refreshAll: () => Promise<void>
   go: (r: Route) => void
   addServer: () => void
+  addSite: () => void
 }
 
 const Ctx = createContext<AppCtx>(null as any)
@@ -37,6 +41,9 @@ export default function App() {
   const [route, setRoute] = useState<Route>({ page: 'overview' })
   const [statuses, setStatuses] = useState<Record<string, ServerStatus>>({})
   const [adding, setAdding] = useState(false)
+  const [addingSite, setAddingSite] = useState(false)
+  // Last known site jobs per server: a site stays in the menu while its server is unreachable.
+  const siteJobs = useRef<Record<string, JobView[]>>({})
 
   const reload = useCallback(async () => setState(await api.state()), [])
   useEffect(() => { reload() }, [reload])
@@ -61,7 +68,13 @@ export default function App() {
   // Set before rendering so every t() below uses the chosen language.
   setLang(state.settings.language || defaultLang())
 
-  const ctx: AppCtx = { state, reload, statuses, setStatus, refreshAll, go: setRoute, addServer: () => setAdding(true) }
+  const sites = state.servers.flatMap(s => {
+    const st = statuses[s.id]
+    if (st?.info) siteJobs.current[s.id] = st.info.jobs.filter(j => j.kind === 'site')
+    return (siteJobs.current[s.id] || []).map(j => ({ j, s, st }))
+  }).sort((a, b) => a.j.name.localeCompare(b.j.name))
+
+  const ctx: AppCtx = { state, reload, statuses, setStatus, refreshAll, go: setRoute, addServer: () => setAdding(true), addSite: () => setAddingSite(true) }
 
   return (
     <UIProvider>
@@ -105,6 +118,27 @@ export default function App() {
               )
             })}
             {state.servers.length === 0 && <div className="faint small" style={{ padding: '4px 10px' }}>{t('Пока нет серверов')}</div>}
+
+            <div className="nav-section">
+              {t('Сайты на хостинге')}
+              <button className="btn ghost sm icon" title={t('Добавить сайт')} onClick={() => setAddingSite(true)}><Plus size={15} /></button>
+            </div>
+            {sites.map(({ j, s, st }) => {
+              const running = st?.active?.some(r => r.jobId === j.id && r.status === 'running')
+              const last = j.lastRun?.status
+              const dot = !st ? '' : !st.online ? 'off' : running ? 'wait' : last === 'failed' ? 'off' : last ? 'on' : ''
+              return (
+                <button key={s.id + j.id} className={cls('nav-item', route.page === 'site' && route.job === j.id && 'active')} onClick={() => setRoute({ page: 'site', server: s.id, job: j.id })}>
+                  <Globe size={17} />
+                  <span className="grow">
+                    {j.name}
+                    <span className="sub">{t('через {server}', { server: s.name })}</span>
+                  </span>
+                  <span className={cls('dot', dot)} title={st && !st.online ? st.error || '' : ''} />
+                </button>
+              )
+            })}
+            {sites.length === 0 && <div className="faint small" style={{ padding: '4px 10px' }}>{t('Пока нет сайтов')}</div>}
             <div className="sidebar-foot">
               <button className={cls('nav-item', route.page === 'about' && 'active')} style={{ marginBottom: 8 }} onClick={() => setRoute({ page: 'about' })}>
                 <Info size={17} /><span className="grow">{t('О программе')}</span>
@@ -118,8 +152,11 @@ export default function App() {
             {route.page === 'settings' && <SettingsPage />}
             {route.page === 'about' && <About />}
             {route.page === 'server' && state.servers.some(s => s.id === route.id) && <ServerPage key={route.id} id={route.id} />}
+            {route.page === 'site' && state.servers.some(s => s.id === route.server) && <SitePage key={route.server + route.job} server={route.server} job={route.job} />}
           </main>
         </div>
+        {addingSite && <JobEditor site serverId="" job={null} onClose={() => setAddingSite(false)}
+          onSaved={(server, job) => { setAddingSite(false); setRoute({ page: 'site', server, job }) }} />}
         {adding && <ServerForm onClose={() => setAdding(false)} onSaved={id => { setAdding(false); setRoute({ page: 'server', id }) }} />}
       </Ctx.Provider>
     </UIProvider>

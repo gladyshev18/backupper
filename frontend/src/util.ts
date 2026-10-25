@@ -131,7 +131,15 @@ export function newSource(type: Source['type']): Source {
   }
 }
 
-export const isCalendar = (r: Retention) => r.daily > 0 || r.weekly > 0 || r.monthly > 0 || r.yearly > 0
+/** A site from the "Sites on hosting" section: a job with one site source. */
+export function newSiteJob(storages: string[]): Job {
+  return { ...newJob(storages), kind: 'site', sources: [newSource('site')] }
+}
+
+/** "https://www.shop.ru/" → "shop.ru". */
+export const siteHost = (url?: string) => (url || '').trim().replace(/^https?:\/\//i, '').replace(/[/?#].*$/, '').replace(/^www\./i, '').toLowerCase()
+
+export const isCalendar =(r: Retention) => r.daily > 0 || r.weekly > 0 || r.monthly > 0 || r.yearly > 0
 
 /** Effective retention of a job; jobs saved by agents before 1.2 only have `keep`. */
 export function policy(j: Pick<Job, 'keep' | 'retention'>): Retention {

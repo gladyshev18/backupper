@@ -86,6 +86,10 @@ stale ones matching that exact pattern are deleted on the next run.
 ## Cloud layout
 
 `<root>/<server slug>/<job slug>/<YYYY-MM-DD_HH-MM-SS>/<file>.partNNNN` + `manifest.json` (status, files, parts, sha256).
+Sites from the panel's "Сайты на хостинге" section are jobs with `kind: "site"` (exactly one `site` source) kept on the
+agent of the server chosen in "Через сервер"; their copies go to `<root>/sites/<site slug>/<date>/` (`model.SitesFolder`),
+so moving a site to another server keeps its copies and rotation. Agents ≤ 1.3.0 drop `kind`, so the panel only offers
+up-to-date agents there. Site jobs are hidden from the server's job list and shown in their own menu section.
 Rotation follows `Job.Retention` (GFS: last N + newest copy per day/ISO week/month/year, `model.Retention.Select`);
 an empty retention falls back to `keep` (jobs from agents ≤ 1.1). Only folders whose manifest says success/warning count;
 older broken ones are removed. A file that fails mid-upload deletes its parts at once; when the cloud has less free space
