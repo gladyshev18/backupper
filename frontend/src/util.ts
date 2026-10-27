@@ -81,6 +81,13 @@ export const sourceLabels: Record<Source['type'], string> = {
   site: 'Сайт на хостинге',
 }
 
+/** CMS whose settings files script.php reads the database access from (ids as there). */
+export const siteCMS: [string, string][] = [
+  ['bitrix', '1С-Битрикс'], ['wordpress', 'WordPress'], ['joomla', 'Joomla'], ['drupal', 'Drupal'], ['opencart', 'OpenCart / ocStore'],
+  ['modx', 'MODX'], ['prestashop', 'PrestaShop'], ['magento', 'Magento'], ['dle', 'DataLife Engine'], ['hostcms', 'HostCMS'],
+  ['webasyst', 'Webasyst / Shop-Script'], ['umi', 'UMI.CMS'], ['laravel', 'Laravel'],
+]
+
 export const kindLabels: Record<StorageKind, string> = {
   yandex: 'Яндекс Диск',
   yandex_webdav: 'Яндекс Диск (WebDAV)',

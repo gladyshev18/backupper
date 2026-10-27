@@ -33,6 +33,7 @@ type started struct {
 	r             io.Reader
 	precompressed bool                 // already gzip: do not compress again
 	raw           func() int64         // uncompressed size, when r is compressed
+	est           func() int64         // expected uncompressed size once the source knows it (0 = not yet)
 	wait          func() (bool, error) // after reading: (finished with warnings, error)
 	cleanup       func()
 }

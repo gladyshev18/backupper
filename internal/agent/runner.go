@@ -138,7 +138,7 @@ func (a *Agent) execute(ctx context.Context, run *model.Run, job model.Job) {
 	a.state.WithRun(run, func(r *model.Run) {
 		r.Status = model.RunRunning
 		r.StartedAt = time.Now()
-		r.Progress = &model.Progress{Stage: "Подготовка"}
+		r.Progress = &model.Progress{Stage: "Подготовка", Since: r.StartedAt}
 	})
 	a.logf(run, "info", "Запуск задачи «%s» (%s)", job.Name, run.Trigger)
 
@@ -191,7 +191,12 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 		return model.RunFailed, err.Error()
 	}
 	plan := a.PlanFor(job, "ru")
+	// The last successful run predicts this one; sources that can count their
+	// size refine it per file (est).
+	lastRaw, lastFiles := a.state.LastRaw(job.ID)
+	est := &runEstimate{files: lastFiles}
 	a.state.WithRun(run, func(r *model.Run) {
+		r.EstRawBytes = lastRaw
 		r.RemoteDir = runDir
 		r.Storages = job.Storages
 		r.ChunkSize = plan.Size
@@ -267,7 +272,7 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 				name = strings.Replace(name, ".", fmt.Sprintf("_%d.", n+1), 1)
 			}
 			usedNames[name]++
-			rf, warn := a.runStream(ctx, run, s, name, dests, plan, level, recipient)
+			rf, warn := a.runStream(ctx, run, s, name, dests, plan, level, recipient, est)
 			rf.Source = defaultName(src)
 			rf.Encrypted = job.Encrypt
 			if rf.Error != "" {
@@ -279,6 +284,14 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 				r.Files = append(r.Files, rf)
 				r.Bytes += rf.Size
 				r.RawBytes += rf.RawSize
+				// The file is done: its real size replaces the guess in the total, and its
+				// bytes now count in the run totals, not in the progress (the UI adds both).
+				if p := r.Progress; p != nil {
+					if r.EstRawBytes > 0 {
+						r.EstRawBytes += rf.RawSize - p.EstRaw
+					}
+					p.EstRaw, p.RawBytes, p.Bytes = 0, 0, 0
+				}
 			})
 		}
 		cleanupSrc()
@@ -369,8 +382,38 @@ func (a *Agent) cleanupDir(dests []dest) {
 	}
 }
 
+// runEstimate is the expected size of a run, from its previous successful run.
+type runEstimate struct {
+	files map[string]int64 // uncompressed size per file name
+}
+
+// fileEst returns the expected size of a file: counted by the source when it
+// knows it, else the size from the last run.
+func (e *runEstimate) fileEst(name string, counted int64) int64 {
+	if counted > 0 {
+		return counted
+	}
+	return e.files[name]
+}
+
+// setFileEst records the expected size of the running file and moves the run total
+// by the difference from the last run (only when there is a run total to correct).
+func setFileEst(r *model.Run, e *runEstimate, name string, n int64) {
+	if r.Progress == nil || n <= 0 || r.Progress.EstRaw == n {
+		return
+	}
+	if r.EstRawBytes > 0 {
+		prev := r.Progress.EstRaw
+		if prev == 0 {
+			prev = e.files[name]
+		}
+		r.EstRawBytes += n - prev
+	}
+	r.Progress.EstRaw = n
+}
+
 // runStream runs one dump command and streams it compressed (and encrypted) to the clouds.
-func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name string, dests []dest, plan model.ChunkPlan, level int, recipient age.Recipient) (rf model.RunFile, warn bool) {
+func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name string, dests []dest, plan model.ChunkPlan, level int, recipient age.Recipient, est *runEstimate) (rf model.RunFile, warn bool) {
 	rf = model.RunFile{Name: name}
 	a.logf(run, "info", "%s → %s", s.label, name)
 	ctx, cancel := context.WithCancel(parent)
@@ -425,7 +468,8 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 	}
 
 	a.state.WithRun(run, func(r *model.Run) {
-		r.Progress = &model.Progress{Stage: "Дамп", Source: s.label}
+		r.Progress = &model.Progress{Stage: "Дамп", Source: s.label, Since: time.Now()}
+		setFileEst(r, est, name, est.fileEst(name, 0))
 	})
 	src, err := s.start(ctx, func(l, f string, args ...any) { a.logf(run, l, f, args...) })
 	if err != nil {
@@ -451,9 +495,14 @@ func (a *Agent) runStream(parent context.Context, run *model.Run, s stream, name
 			if src.raw != nil {
 				cur = src.raw()
 			}
+			var counted int64
+			if src.est != nil {
+				counted = src.est()
+			}
 			a.state.WithRun(run, func(r *model.Run) {
 				if r.Progress != nil {
 					r.Progress.RawBytes = cur
+					setFileEst(r, est, name, est.fileEst(name, counted))
 				}
 			})
 		}

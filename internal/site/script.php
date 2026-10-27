@@ -153,22 +153,68 @@ function bk_bytes($v)
 
 // ---------- CMS and database settings ----------
 
+/**
+ * Where popular CMS keep the database access, relative to the site root ("../" — one
+ * level up, e.g. a Laravel or Magento root opened at public/ or pub/). The first CMS
+ * with an existing file is the site's CMS.
+ */
+function bk_cms_configs()
+{
+    return [
+        'bitrix' => ['bitrix/.settings.php', 'bitrix/php_interface/dbconn.php'],
+        'wordpress' => ['wp-config.php', '../wp-config.php'],
+        'joomla' => ['configuration.php'],
+        'drupal' => ['sites/default/settings.php'],
+        'opencart' => ['admin/config.php'],
+        'modx' => ['config.core.php', 'core/config/config.inc.php'],
+        'prestashop' => ['app/config/parameters.php', 'config/settings.inc.php'],
+        'magento' => ['app/etc/env.php', '../app/etc/env.php'],
+        'dle' => ['engine/data/dbconfig.php'],
+        'hostcms' => ['modules/core/config/database.php'],
+        'webasyst' => ['wa-config/db.php'],
+        'umi' => ['config.ini'],
+        'laravel' => ['../artisan', 'artisan'],
+    ];
+}
+
 function bk_cms($root)
 {
-    if (is_file("$root/bitrix/.settings.php") || is_file("$root/bitrix/php_interface/dbconn.php")) {
-        return 'bitrix';
-    }
-    if (is_file("$root/wp-config.php") || is_file(dirname($root) . '/wp-config.php')) {
-        return 'wordpress';
+    foreach (bk_cms_configs() as $cms => $files) {
+        foreach ($files as $f) {
+            if (is_file("$root/$f")) {
+                return $cms;
+            }
+        }
     }
     return '';
 }
 
-function bk_php_string($src, $name)
+/** PHP source without comments, so commented-out examples are not taken for settings. */
+function bk_php_code($f)
 {
-    $re = "/define\\s*\\(\\s*['\"]" . preg_quote($name, '/') . "['\"]\\s*,\\s*(?:'((?:[^'\\\\]|\\\\.)*)'|\"((?:[^\"\\\\]|\\\\.)*)\")/s";
-    if (!preg_match($re, $src, $m)) {
+    $src = (string)@file_get_contents($f);
+    if ($src === '' || !function_exists('token_get_all')) {
+        return $src;
+    }
+    $out = '';
+    foreach (@token_get_all($src) as $tk) {
+        if (!is_array($tk)) {
+            $out .= $tk;
+        } elseif ($tk[0] !== T_COMMENT && $tk[0] !== T_DOC_COMMENT) {
+            $out .= $tk[1];
+        }
+    }
+    return $out;
+}
+
+/** First match of $lead followed by a quoted string or a number, unescaped. */
+function bk_php_value($src, $lead)
+{
+    if (!preg_match('/' . $lead . '\s*(?:\'((?:[^\'\\\\]|\\\\.)*)\'|"((?:[^"\\\\]|\\\\.)*)"|(\d+))/s', $src, $m)) {
         return null;
+    }
+    if (isset($m[3]) && $m[3] !== '') {
+        return $m[3];
     }
     if (isset($m[2]) && $m[2] !== '') {
         return stripcslashes($m[2]);
@@ -176,48 +222,200 @@ function bk_php_string($src, $name)
     return str_replace(["\\'", '\\\\'], ["'", '\\'], $m[1]);
 }
 
+/** define('NAME', 'value') */
+function bk_php_string($src, $name)
+{
+    return bk_php_value($src, 'define\s*\(\s*[\'"]' . preg_quote($name, '/') . '[\'"]\s*,');
+}
+
+/** $name = 'value' (also "public $name = 'value'" in a class) */
+function bk_php_var($src, $name)
+{
+    return bk_php_value($src, '\$' . preg_quote($name, '/') . '\s*=');
+}
+
+/** 'key' => 'value' */
+function bk_php_key($src, $key)
+{
+    return bk_php_value($src, '[\'"]' . preg_quote($key, '/') . '[\'"]\s*=>');
+}
+
+/** KEY=value lines of a .env file. */
+function bk_env($f)
+{
+    $r = [];
+    foreach ((array)@file($f, FILE_IGNORE_NEW_LINES) as $l) {
+        if (!preg_match('/^\s*(?:export\s+)?([A-Za-z0-9_.]+)\s*=\s*(.*)$/', $l, $m)) {
+            continue;
+        }
+        $v = trim($m[2]);
+        if (preg_match('/^"((?:[^"\\\\]|\\\\.)*)"/', $v, $q)) {
+            $v = stripcslashes($q[1]);
+        } elseif (preg_match("/^'([^']*)'/", $v, $q)) {
+            $v = $q[1];
+        } else {
+            $v = trim(preg_replace('/\s+[#;].*$/', '', $v));
+        }
+        $r[$m[1]] = $v;
+    }
+    return $r;
+}
+
+/** The settings found in $file (relative to the root) as host/name/user/pass/from, or null. */
+function bk_db_found($file, $host, $name, $user, $pass, $port = null)
+{
+    if ($name === null || $name === '') {
+        return null;
+    }
+    $host = (string)$host;
+    if ($port !== null && $port !== '' && (string)$port !== '3306' && strpos($host, ':') === false) {
+        $host = ($host === '' ? 'localhost' : $host) . ':' . $port;
+    }
+    return ['host' => $host, 'name' => (string)$name, 'user' => (string)$user, 'pass' => (string)$pass, 'from' => $file];
+}
+
 function bk_db_settings($root, $cms)
 {
-    if ($cms === 'bitrix') {
-        $f = "$root/bitrix/.settings.php";
-        if (is_file($f)) {
-            $s = include $f;
-            $c = $s['connections']['value']['default'] ?? null;
-            if (is_array($c) && !empty($c['database'])) {
-                return ['host' => (string)$c['host'], 'name' => (string)$c['database'], 'user' => (string)$c['login'], 'pass' => (string)$c['password'], 'from' => 'bitrix/.settings.php'];
+    $up = dirname($root);
+    $first = function (array $files) use ($root) {
+        foreach ($files as $f) {
+            if (is_file("$root/$f")) {
+                return $f;
             }
         }
-        $f = "$root/bitrix/php_interface/dbconn.php";
-        if (is_file($f)) {
-            $r = (function ($f) {
-                $DBHost = $DBLogin = $DBPassword = $DBName = null;
-                @include $f;
-                return [$DBHost, $DBName, $DBLogin, $DBPassword];
-            })($f);
-            if (!empty($r[1])) {
-                return ['host' => (string)$r[0], 'name' => (string)$r[1], 'user' => (string)$r[2], 'pass' => (string)$r[3], 'from' => 'bitrix/php_interface/dbconn.php'];
+        return null;
+    };
+    switch ($cms) {
+        case 'bitrix':
+            $f = "$root/bitrix/.settings.php";
+            if (is_file($f)) {
+                $s = include $f;
+                $c = $s['connections']['value']['default'] ?? null;
+                if (is_array($c) && !empty($c['database'])) {
+                    return bk_db_found('bitrix/.settings.php', $c['host'] ?? '', $c['database'], $c['login'] ?? '', $c['password'] ?? '');
+                }
             }
-        }
-    }
-    if ($cms === 'wordpress') {
-        $f = is_file("$root/wp-config.php") ? "$root/wp-config.php" : dirname($root) . '/wp-config.php';
-        $src = (string)@file_get_contents($f);
-        $name = bk_php_string($src, 'DB_NAME');
-        if ($name !== null) {
-            return ['host' => (string)bk_php_string($src, 'DB_HOST'), 'name' => $name, 'user' => (string)bk_php_string($src, 'DB_USER'), 'pass' => (string)bk_php_string($src, 'DB_PASSWORD'), 'from' => 'wp-config.php'];
-        }
+            $f = "$root/bitrix/php_interface/dbconn.php";
+            if (is_file($f)) {
+                $r = (function ($f) {
+                    $DBHost = $DBLogin = $DBPassword = $DBName = null;
+                    @include $f;
+                    return [$DBHost, $DBName, $DBLogin, $DBPassword];
+                })($f);
+                return bk_db_found('bitrix/php_interface/dbconn.php', $r[0], $r[1], $r[2], $r[3]);
+            }
+            return null;
+        case 'wordpress':
+            $f = $first(['wp-config.php', '../wp-config.php']);
+            $src = $f ? bk_php_code("$root/$f") : '';
+            return bk_db_found('wp-config.php', bk_php_string($src, 'DB_HOST'), bk_php_string($src, 'DB_NAME'), bk_php_string($src, 'DB_USER'), bk_php_string($src, 'DB_PASSWORD'));
+        case 'joomla':
+            $src = bk_php_code("$root/configuration.php");
+            if (preg_match('/^(pg|postgres)/i', (string)bk_php_var($src, 'dbtype'))) {
+                return ['error' => 'configuration.php: сайт работает на PostgreSQL, а сохранять можно только MySQL/MariaDB'];
+            }
+            return bk_db_found('configuration.php', bk_php_var($src, 'host'), bk_php_var($src, 'db'), bk_php_var($src, 'user'), bk_php_var($src, 'password'));
+        case 'drupal':
+            $src = bk_php_code("$root/sites/default/settings.php");
+            if (($url = bk_php_var($src, 'db_url')) !== null && ($u = parse_url($url))) { // Drupal 6
+                return bk_db_found('sites/default/settings.php', $u['host'] ?? '', trim($u['path'] ?? '', '/'), urldecode($u['user'] ?? ''), urldecode($u['pass'] ?? ''), $u['port'] ?? null);
+            }
+            if (preg_match('/^(pgsql|sqlite)/', (string)bk_php_key($src, 'driver'))) {
+                return ['error' => 'sites/default/settings.php: база не MySQL/MariaDB'];
+            }
+            return bk_db_found('sites/default/settings.php', bk_php_key($src, 'host'), bk_php_key($src, 'database'), bk_php_key($src, 'username'), bk_php_key($src, 'password'), bk_php_key($src, 'port'));
+        case 'opencart':
+            $f = $first(['config.php', 'admin/config.php']);
+            $src = $f ? bk_php_code("$root/$f") : '';
+            return bk_db_found((string)$f, bk_php_string($src, 'DB_HOSTNAME'), bk_php_string($src, 'DB_DATABASE'), bk_php_string($src, 'DB_USERNAME'), bk_php_string($src, 'DB_PASSWORD'), bk_php_string($src, 'DB_PORT'));
+        case 'modx':
+            // The core folder may be moved out of the site: config.core.php points to it.
+            $core = "$root/core/";
+            if (is_file("$root/config.core.php") && ($c = bk_php_string(bk_php_code("$root/config.core.php"), 'MODX_CORE_PATH'))) {
+                $core = $c;
+            }
+            $f = rtrim($core, '/') . '/config/config.inc.php';
+            $src = bk_php_code($f);
+            $label = strpos($f, $root . '/') === 0 ? substr($f, strlen($root) + 1) : $f;
+            return bk_db_found($label, bk_php_var($src, 'database_server'), trim((string)bk_php_var($src, 'dbase'), '`'), bk_php_var($src, 'database_user'), bk_php_var($src, 'database_password'));
+        case 'prestashop':
+            if (is_file("$root/app/config/parameters.php")) {
+                $src = bk_php_code("$root/app/config/parameters.php");
+                return bk_db_found('app/config/parameters.php', bk_php_key($src, 'database_host'), bk_php_key($src, 'database_name'), bk_php_key($src, 'database_user'), bk_php_key($src, 'database_password'), bk_php_key($src, 'database_port'));
+            }
+            $src = bk_php_code("$root/config/settings.inc.php");
+            return bk_db_found('config/settings.inc.php', bk_php_string($src, '_DB_SERVER_'), bk_php_string($src, '_DB_NAME_'), bk_php_string($src, '_DB_USER_'), bk_php_string($src, '_DB_PASSWD_'));
+        case 'magento':
+            $f = $first(['app/etc/env.php', '../app/etc/env.php']);
+            $src = $f ? bk_php_code("$root/$f") : '';
+            return bk_db_found((string)$f, bk_php_key($src, 'host'), bk_php_key($src, 'dbname'), bk_php_key($src, 'username'), bk_php_key($src, 'password'));
+        case 'dle':
+            $src = bk_php_code("$root/engine/data/dbconfig.php");
+            return bk_db_found('engine/data/dbconfig.php', bk_php_string($src, 'DBHOST'), bk_php_string($src, 'DBNAME'), bk_php_string($src, 'DBUSER'), bk_php_string($src, 'DBPASS'));
+        case 'hostcms':
+            $src = bk_php_code("$root/modules/core/config/database.php");
+            return bk_db_found('modules/core/config/database.php', bk_php_key($src, 'host'), bk_php_key($src, 'database'), bk_php_key($src, 'username'), bk_php_key($src, 'password'));
+        case 'webasyst':
+            $src = bk_php_code("$root/wa-config/db.php");
+            return bk_db_found('wa-config/db.php', bk_php_key($src, 'host'), bk_php_key($src, 'database'), bk_php_key($src, 'user'), bk_php_key($src, 'password'), bk_php_key($src, 'port'));
+        case 'umi':
+            $e = bk_env("$root/config.ini");
+            return bk_db_found('config.ini', $e['core.host'] ?? '', $e['core.dbname'] ?? null, $e['core.login'] ?? '', $e['core.password'] ?? '', $e['core.port'] ?? null);
+        case 'laravel':
+            $f = is_file("$root/.env") ? "$root/.env" : "$up/.env";
+            $e = bk_env($f);
+            if (!in_array($e['DB_CONNECTION'] ?? 'mysql', ['mysql', 'mariadb'], true)) {
+                return ['error' => '.env: DB_CONNECTION=' . $e['DB_CONNECTION'] . ', а сохранять можно только MySQL/MariaDB'];
+            }
+            $host = !empty($e['DB_SOCKET']) ? 'localhost:' . $e['DB_SOCKET'] : ($e['DB_HOST'] ?? '');
+            return bk_db_found($f === "$root/.env" ? '.env' : '../.env', $host, $e['DB_DATABASE'] ?? null, $e['DB_USERNAME'] ?? '', $e['DB_PASSWORD'] ?? '', $e['DB_PORT'] ?? null);
     }
     return null;
 }
 
-function bk_db_resolve($root, array $p)
+/**
+ * Connects to the site database: with the CMS settings first, then with the ones
+ * entered in the panel when the CMS has none or they do not work.
+ * Returns [settings, PDO, charset, error]; settings get a "note" when the panel's were used.
+ */
+function bk_db_open($root, array $p)
 {
-    $o = $p['db'] ?? [];
-    if (!empty($o['name'])) {
-        return ['host' => (string)($o['host'] ?? 'localhost'), 'name' => (string)$o['name'], 'user' => (string)($o['user'] ?? ''), 'pass' => (string)($o['pass'] ?? ''), 'from' => 'панель'];
-    }
     $cms = ($p['cms'] ?? 'auto') === 'auto' ? bk_cms($root) : (string)$p['cms'];
-    return bk_db_settings($root, $cms);
+    // After "info" the agent passes which settings worked, so the dump portions do
+    // not wait for a failing connection again.
+    $only = (string)($p['dbFrom'] ?? '');
+    if ($only === 'panel') {
+        $cms = 'none';
+    }
+    $tries = [];
+    $errs = [];
+    $cfg = $cms !== '' && $cms !== 'none' ? bk_db_settings($root, $cms) : null;
+    if (isset($cfg['error'])) {
+        $errs[] = $cfg['error'];
+    } elseif ($cfg) {
+        $tries[] = $cfg;
+    } elseif ($cms !== '' && $cms !== 'none') {
+        $errs[] = 'в настройках CMS доступ к базе не найден';
+    }
+    $o = $p['db'] ?? [];
+    if (!empty($o['name']) && $only !== 'cms') {
+        $tries[] = ['host' => (string)($o['host'] ?? 'localhost'), 'name' => (string)$o['name'], 'user' => (string)($o['user'] ?? ''), 'pass' => (string)($o['pass'] ?? ''), 'from' => 'панель'];
+    }
+    foreach ($tries as $db) {
+        try {
+            list($pdo, $cs) = bk_pdo($db);
+            if ($errs && $db['from'] === 'панель') {
+                $db['note'] = implode('; ', $errs);
+            }
+            return [$db, $pdo, $cs, null];
+        } catch (Exception $e) {
+            $errs[] = ($db['from'] === 'панель' ? 'доступ из панели' : $db['from']) . ': ' . $e->getMessage();
+        }
+    }
+    if (!$tries) {
+        return [null, null, null, 'не найдены настройки базы данных в файлах CMS — укажите доступ вручную'];
+    }
+    return [$tries[0], null, null, implode('; ', $errs)];
 }
 
 function bk_pdo(array $db)
@@ -239,7 +437,8 @@ function bk_pdo(array $db)
         $host = $h;
     }
     $dsn .= $sock ? ';unix_socket=' . $sock : ';host=' . $host . ($port ? ';port=' . $port : '');
-    $opts = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => true];
+    // A short connect timeout: settings that do not work give way to the next ones.
+    $opts = [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES => true, PDO::ATTR_TIMEOUT => 15];
     $last = null;
     foreach (['utf8mb4', 'utf8'] as $cs) {
         try {
@@ -283,11 +482,13 @@ function bk_info($root, array $p)
     $res['top'] = array_slice(array_values(array_filter($res['top'], function ($n) {
         return strpos($n, 'backupper_') !== 0;
     })), 0, 40);
-    $db = bk_db_resolve($root, $p);
+    list($db, $pdo, , $err) = $res['pdoMysql'] ? bk_db_open($root, $p) : [null, null, null, null];
     if ($db) {
-        $res['db'] = ['host' => $db['host'], 'name' => $db['name'], 'user' => $db['user'], 'from' => $db['from']];
+        $res['db'] = ['host' => $db['host'], 'name' => $db['name'], 'user' => $db['user'], 'from' => $db['from'], 'note' => $db['note'] ?? ''];
         try {
-            list($pdo) = bk_pdo($db);
+            if (!$pdo) {
+                throw new Exception($err);
+            }
             $st = $pdo->prepare('SELECT COUNT(*), COALESCE(SUM(data_length + index_length), 0) FROM information_schema.TABLES WHERE table_schema = ?');
             $st->execute([$db['name']]);
             $r = $st->fetch(PDO::FETCH_NUM);
@@ -297,17 +498,18 @@ function bk_info($root, array $p)
         } catch (Exception $e) {
             $res['db']['error'] = $e->getMessage();
         }
+    } elseif ($err) {
+        $res['dbError'] = $err;
     }
     bk_send(['info' => $res, 'done' => true]);
 }
 
 function bk_dump($root, array $p, BkBudget $budget)
 {
-    $db = bk_db_resolve($root, $p);
-    if (!$db) {
-        bk_send(['err' => 'не найдены настройки базы данных (bitrix/.settings.php, wp-config.php) — укажите их вручную']);
+    list($db, $pdo, $cs, $err) = bk_db_open($root, $p);
+    if (!$pdo) {
+        bk_send(['err' => $err]);
     }
-    list($pdo, $cs) = bk_pdo($db);
     $st = $p['state'] ?? ['ph' => 'head'];
     $out = new BkOut();
     $log = [];
@@ -479,6 +681,7 @@ function bk_build_list($root, array $pats, array $anchored)
     fwrite($f, "<?php exit; ?>\n");
     $count = 0;
     $skip = 0;
+    $tar = 1024.0; // expected tar size (float: 32-bit PHP), for the progress estimate
     $it = new RecursiveIteratorIterator(
         new RecursiveCallbackFilterIterator(
             new RecursiveDirectoryIterator($root, FilesystemIterator::SKIP_DOTS | FilesystemIterator::UNIX_PATHS | FilesystemIterator::CURRENT_AS_FILEINFO),
@@ -505,9 +708,20 @@ function bk_build_list($root, array $pats, array $anchored)
         $t = $fi->isLink() ? 'l' : ($fi->isDir() ? 'd' : 'f');
         fwrite($f, "$t\t$rel\n");
         $count++;
+        $tar += bk_tar_head_size($t === 'd' ? $rel . '/' : $rel);
+        if ($t === 'f') {
+            $tar += ceil((float)@filesize($fi->getPathname()) / 512) * 512;
+        }
     }
     fclose($f);
-    return [$count, $skip];
+    return [$count, $skip, $tar];
+}
+
+// Bytes taken by the headers of one entry, as bk_tar_header writes them.
+function bk_tar_head_size($name)
+{
+    $n = strlen($name);
+    return 512 + ($n > 99 ? 512 + ceil(($n + 1) / 512) * 512 : 0);
 }
 
 function bk_tar_num($n, $len)
@@ -559,10 +773,10 @@ function bk_files($root, array $p, BkBudget $budget)
         if (!empty($p['cmsExcludes'])) {
             $anchored = bk_cms_excludes($root, $cms, (array)($p['presets'] ?? []), $log);
         }
-        list($count, $skip) = bk_build_list($root, $pats, $anchored);
+        list($count, $skip, $tar) = bk_build_list($root, $pats, $anchored);
         $log[] = "в архив попадёт объектов: $count, исключено по шаблонам: $skip";
         $st = ['ph' => 'tar', 'lo' => 0, 'off' => 0, 'sz' => 0, 'n' => 0, 'skip' => 0];
-        bk_send(['state' => $st, 'done' => false, 'raw' => 0, 'log' => $log]);
+        bk_send(['state' => $st, 'done' => false, 'raw' => 0, 'est' => $tar, 'log' => $log]);
     }
 
     $lf = fopen(bk_list_path($root), 'rb');

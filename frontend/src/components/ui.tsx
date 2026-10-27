@@ -48,9 +48,12 @@ export function Field({ label, hint, children, className }: { label?: ReactNode;
   )
 }
 
-export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: ReactNode }) {
+export function Toggle({ on, onChange, label, small, disabled, title }: {
+  on: boolean; onChange: (v: boolean) => void; label?: ReactNode; small?: boolean; disabled?: boolean; title?: string
+}) {
   return (
-    <span className={cls('toggle', on && 'on')} onClick={() => onChange(!on)} role="switch" aria-checked={on}>
+    <span className={cls('toggle', on && 'on', small && 'sm', disabled && 'disabled')} onClick={() => !disabled && onChange(!on)}
+      role="switch" aria-checked={on} aria-disabled={disabled} title={title}>
       <span className="track" />
       {label && <span>{label}</span>}
     </span>

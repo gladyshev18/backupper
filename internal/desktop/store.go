@@ -104,7 +104,11 @@ func (s *Store) Update(fn func(c *Config) error) error {
 	if err := os.Rename(tmp, s.path); err != nil {
 		return err
 	}
-	s.cfg = next
+	// Keep a fresh copy: fn may have stored pointers (e.g. Storage.TgServer) that the
+	// caller still holds and changes afterwards, which would silently alter the config.
+	var saved Config
+	_ = json.Unmarshal(plain, &saved)
+	s.cfg = saved
 	return nil
 }
 

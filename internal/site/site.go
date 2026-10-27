@@ -71,6 +71,7 @@ type meta struct {
 	State json.RawMessage `json:"state"`
 	Done  bool            `json:"done"`
 	Raw   int64           `json:"raw"`
+	Est   float64         `json:"est"` // files: size of the whole tar, sent with the file list
 	Log   []string        `json:"log"`
 	Err   string          `json:"err"`
 	Info  *model.SiteInfo `json:"info"`
@@ -215,6 +216,10 @@ func (s *Session) baseParams() map[string]any {
 	if s.src.DBName != "" {
 		p["db"] = map[string]string{"host": s.src.DBHost, "name": s.src.DBName, "user": s.src.DBUser, "pass": s.src.DBPassword}
 	}
+	// "info" found which settings work (CMS files or the panel's): keep to them.
+	if db := s.Info.DB; db != nil && db.Error == "" && db.From != "" {
+		p["dbFrom"] = map[bool]string{true: "panel", false: "cms"}[db.From == "панель"]
+	}
 	return p
 }
 
@@ -239,10 +244,14 @@ func (s *Session) Warnings() []string {
 		switch {
 		case !i.PDOMySQL:
 			w = append(w, "на хостинге нет расширения pdo_mysql — базу сохранить не получится")
+		case i.DB == nil && i.DBError != "":
+			w = append(w, i.DBError)
 		case i.DB == nil:
 			w = append(w, "не найдены настройки базы данных — укажите их вручную")
 		case i.DB.Error != "":
 			w = append(w, "не удалось подключиться к базе: "+i.DB.Error)
+		case i.DB.Note != "":
+			w = append(w, "доступ к базе из файлов CMS не подошёл ("+i.DB.Note+") — используется указанный вручную")
 		}
 	}
 	if !i.Deflate {
@@ -343,8 +352,9 @@ func snippet(b []byte) string {
 }
 
 // Stream returns the gzip stream of the database dump ("db") or of the files ("files").
-// raw receives the uncompressed byte count as the stream advances.
-func (s *Session) Stream(ctx context.Context, action string, raw func(int64)) io.ReadCloser {
+// raw receives the uncompressed byte count as the stream advances, est the expected
+// uncompressed total once the script knows it (either may be nil).
+func (s *Session) Stream(ctx context.Context, action string, raw, est func(int64)) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
 		var state json.RawMessage
@@ -371,6 +381,9 @@ func (s *Session) Stream(ctx context.Context, action string, raw func(int64)) io
 			}
 			if raw != nil && m.Raw > 0 {
 				raw(m.Raw)
+			}
+			if est != nil && m.Est > 0 {
+				est(int64(m.Est))
 			}
 			if len(data) > 0 {
 				if _, err := pw.Write(data); err != nil {

@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, Search, ShieldCheck } from 'lucide-react'
 import { api, cmsPresets, errText } from '../api'
 import type { ProbeResult, SiteSource, Source } from '../types'
 import { Alert, Bar, Button, Field, Seg, Toggle } from '../components/ui'
-import { bytes } from '../util'
+import { bytes, siteCMS } from '../util'
 import { t } from '../i18n'
 
 // Settings of a site on shared hosting: FTP access, site address, what to save.
@@ -22,7 +22,10 @@ export default function SiteEditor({ serverId, src, onChange }: { serverId: stri
   const lines = (a?: string[]) => (a || []).join('\n')
   const parse = (v: string) => v.split('\n').map(x => x.trim()).filter(Boolean)
   const info = probe?.site
-  const cmsName = (c: string) => c === 'bitrix' ? t('1С-Битрикс') : c === 'wordpress' ? 'WordPress' : t('не определена')
+  const cmsName = (c: string) => { const n = siteCMS.find(x => x[0] === c)?.[1]; return n ? t(n) : t('не определена') }
+  // The CMS settings are missing or do not work: the manual ones are needed.
+  const dbProblem = !!info && s.db && (!info.db || !!info.db.error || !!info.db.note)
+  useEffect(() => { if (dbProblem) setManualDB(true) }, [dbProblem])
 
   return (
     <>
@@ -65,8 +68,7 @@ export default function SiteEditor({ serverId, src, onChange }: { serverId: stri
         <Field label="CMS" hint={t('Определяет, где взять доступ к базе и что не архивировать')}>
           <select className="select" value={s.cms} onChange={e => set({ cms: e.target.value as SiteSource['cms'] })}>
             <option value="auto">{t('Определить автоматически')}</option>
-            <option value="bitrix">{t('1С-Битрикс')}</option>
-            <option value="wordpress">WordPress</option>
+            {siteCMS.map(([id, name]) => <option key={id} value={id}>{t(name)}</option>)}
             <option value="none">{t('Другая / без CMS')}</option>
           </select>
         </Field>
@@ -83,10 +85,11 @@ export default function SiteEditor({ serverId, src, onChange }: { serverId: stri
           <button className="btn ghost sm" onClick={() => setManualDB(!manualDB)}>
             {manualDB ? <ChevronDown size={14} /> : <ChevronRight size={14} />} {t('Указать доступ к базе вручную')}
           </button>
+          {manualDB && <div className="small faint mt8">{t('Доступ берётся из настроек CMS; этот — запасной, если настроек нет или подключиться по ним не удалось.')}</div>}
           {manualDB && (
             <div className="grid g2 mt8">
               <Field label={t('Хост базы')}><input className="input" value={s.dbHost || ''} onChange={e => set({ dbHost: e.target.value })} placeholder="localhost" /></Field>
-              <Field label={t('Имя базы')} hint={t('Пусто — взять из настроек CMS')}><input className="input" value={s.dbName || ''} onChange={e => set({ dbName: e.target.value })} /></Field>
+              <Field label={t('Имя базы')} hint={t('Пусто — только из настроек CMS')}><input className="input" value={s.dbName || ''} onChange={e => set({ dbName: e.target.value })} /></Field>
               <Field label={t('Пользователь')}><input className="input" value={s.dbUser || ''} onChange={e => set({ dbUser: e.target.value })} /></Field>
               <Field label={t('Пароль')}><input className="input" type="password" value={s.dbPassword || ''} onChange={e => set({ dbPassword: e.target.value })} /></Field>
             </div>
@@ -108,7 +111,8 @@ export default function SiteEditor({ serverId, src, onChange }: { serverId: stri
             {info.diskFree > 0 && <><span className="k">{t('Свободно на хостинге')}</span><span>{bytes(info.diskFree)}</span></>}
             {info.db && <><span className="k">{t('База')}</span><span>{info.db.error
               ? <span style={{ color: 'var(--danger)' }}>{info.db.name}: {info.db.error}</span>
-              : <>{info.db.name} · {t('{n} табл.', { n: info.db.tables })} · {bytes(info.db.size)} · MySQL {info.db.server} <span className="faint">({t('из {file}', { file: info.db.from })})</span></>}</span></>}
+              : <>{info.db.name} · {t('{n} табл.', { n: info.db.tables })} · {bytes(info.db.size)} · MySQL {info.db.server} <span className="faint">({info.db.from === 'панель' ? t('указан вручную') : t('из {file}', { file: info.db.from })})</span></>}</span></>}
+            {!info.db && info.dbError && <><span className="k">{t('База')}</span><span style={{ color: 'var(--danger)' }}>{info.dbError}</span></>}
             <span className="k">{t('В папке')}</span><span className="mono small">{info.top.slice(0, 14).join('  ')}{info.top.length > 14 ? '  …' : ''}</span>
           </div>
           {info.warnings?.map((w, i) => <div key={i} className="mt8"><Alert tone="warning">{w}</Alert></div>)}

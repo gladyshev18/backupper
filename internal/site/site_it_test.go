@@ -70,7 +70,7 @@ type env struct {
 }
 
 func (e env) sql(t *testing.T, db, q string) string {
-	args := []string{"--no-defaults", "-h127.0.0.1", fmt.Sprintf("-P%d", e.dbPort), "-uroot", "-N", "-B"}
+	args := []string{"--no-defaults", "--default-character-set=utf8mb4", "-h127.0.0.1", fmt.Sprintf("-P%d", e.dbPort), "-uroot", "-N", "-B"}
 	if db != "" {
 		args = append(args, db)
 	}
@@ -203,9 +203,13 @@ func TestITSiteBackup(t *testing.T) {
 			s.maxBytes = 256 << 10
 			s.SetExcludes([]string{"*.log"})
 
-			dump := readGz(t, s.Stream(ctx, "db", nil))
-			files := readGz(t, s.Stream(ctx, "files", nil))
+			var est int64
+			dump := readGz(t, s.Stream(ctx, "db", nil, nil))
+			files := readGz(t, s.Stream(ctx, "files", nil, func(n int64) { est = n }))
 			s.Close()
+			if est != int64(len(files)) {
+				t.Fatalf("estimated tar size %d, real %d", est, len(files))
+			}
 
 			left, _ := filepath.Glob(filepath.Join(e.siteDir, "backupper_*"))
 			if len(left) != 0 {
@@ -262,6 +266,84 @@ func TestITSiteBackup(t *testing.T) {
 			t.Logf("dump %d KB, archive %d entries", len(dump)>>10, len(list))
 			for _, l := range logs {
 				t.Log(l)
+			}
+		})
+	}
+}
+
+// Database access is read from the settings files of popular CMS; the panel's manual
+// settings are used when there are none or they do not work.
+func TestITCMSDatabase(t *testing.T) {
+	e := setupEnv(t)
+	_, sftpPort := startFTP(t, e)
+	httpPorts := map[string]int{"7.4": startPHP(t, e, "7.4"), "8.3": startPHP(t, e, "8.3")}
+	os.RemoveAll(filepath.Join(e.siteDir, "bitrix")) // the shared site is a Bitrix one
+	hp := fmt.Sprintf("127.0.0.1:%d", e.dbPort)
+	port := fmt.Sprint(e.dbPort)
+
+	cases := []struct {
+		cms, from string
+		files     map[string]string
+		manual    bool   // the panel has working manual settings
+		note, err string // expected fallback note / error substrings
+	}{
+		{cms: "wordpress", from: "wp-config.php", files: map[string]string{"wp-config.php": "<?php\n// define('DB_NAME', 'commented');\n/* define('DB_NAME', 'old'); */\ndefine( 'DB_NAME', 'shop' );\ndefine('DB_USER', \"root\");\ndefine('DB_PASSWORD', '');\ndefine('DB_HOST', '" + hp + "');\n"}},
+		{cms: "joomla", from: "configuration.php", files: map[string]string{"configuration.php": "<?php\nclass JConfig {\n\tpublic $dbtype = 'mysqli';\n\tpublic $host = '" + hp + "';\n\tpublic $user = 'root';\n\tpublic $password = '';\n\tpublic $db = 'shop';\n\tpublic $dbprefix = 'jos_';\n}\n"}},
+		{cms: "drupal", from: "sites/default/settings.php", files: map[string]string{"sites/default/settings.php": "<?php\n/**\n * Example:\n *   'database' => 'databasename',\n *   'username' => 'sqlusername',\n */\n$databases['default']['default'] = array (\n  'database' => 'shop',\n  'username' => 'root',\n  'password' => '',\n  'prefix' => '',\n  'host' => '127.0.0.1',\n  'port' => '" + port + "',\n  'driver' => 'mysql',\n);\n"}},
+		{cms: "opencart", from: "config.php", files: map[string]string{"admin/config.php": "<?php\n", "config.php": "<?php\ndefine('DB_DRIVER', 'mysqli');\ndefine('DB_HOSTNAME', '127.0.0.1');\ndefine('DB_USERNAME', 'root');\ndefine('DB_PASSWORD', '');\ndefine('DB_DATABASE', 'shop');\ndefine('DB_PORT', " + port + ");\n"}},
+		{cms: "modx", from: "core/config/config.inc.php", files: map[string]string{"config.core.php": "<?php\ndefine('MODX_CORE_PATH', dirname(__FILE__) . '/core/');\n", "core/config/config.inc.php": "<?php\n$database_type = 'mysql';\n$database_server = '" + hp + "';\n$database_user = 'root';\n$database_password = '';\n$dbase = '`shop`';\n"}},
+		{cms: "prestashop", from: "app/config/parameters.php", files: map[string]string{"app/config/parameters.php": "<?php return array (\n  'parameters' => array (\n    'database_host' => '127.0.0.1',\n    'database_port' => '" + port + "',\n    'database_name' => 'shop',\n    'database_user' => 'root',\n    'database_password' => '',\n  ),\n);\n"}},
+		{cms: "magento", from: "app/etc/env.php", files: map[string]string{"app/etc/env.php": "<?php\nreturn ['db' => ['connection' => ['default' => ['host' => '" + hp + "', 'dbname' => 'shop', 'username' => 'root', 'password' => '']]]];\n"}},
+		{cms: "dle", from: "engine/data/dbconfig.php", files: map[string]string{"engine/data/dbconfig.php": "<?PHP\ndefine (\"DBHOST\", \"" + hp + "\");\ndefine (\"DBNAME\", \"shop\");\ndefine (\"DBUSER\", \"root\");\ndefine (\"DBPASS\", \"\");\n"}},
+		{cms: "hostcms", from: "modules/core/config/database.php", files: map[string]string{"modules/core/config/database.php": "<?php\nreturn array(\n\t'default' => array(\n\t\t'driver' => 'pdo',\n\t\t'host' => '" + hp + "',\n\t\t'username' => 'root',\n\t\t'password' => '',\n\t\t'database' => 'shop',\n\t)\n);\n"}},
+		{cms: "webasyst", from: "wa-config/db.php", files: map[string]string{"wa-config/db.php": "<?php\nreturn array(\n  'default' => array(\n    'type' => 'mysqli',\n    'host' => '127.0.0.1',\n    'port' => '" + port + "',\n    'user' => 'root',\n    'password' => '',\n    'database' => 'shop',\n  ),\n);\n"}},
+		{cms: "umi", from: "config.ini", files: map[string]string{"config.ini": "[connections]\ncore.type = \"mysql\"\ncore.host = \"127.0.0.1\"\ncore.login = \"root\"\ncore.password = \"\"\ncore.dbname = \"shop\"\ncore.port = \"" + port + "\"\n"}},
+		{cms: "laravel", from: ".env", files: map[string]string{"artisan": "#!/usr/bin/env php\n", ".env": "APP_NAME=Shop\nDB_CONNECTION=mysql\nDB_HOST=127.0.0.1\nDB_PORT=" + port + "\nDB_DATABASE=\"shop\"\nDB_USERNAME=root\nDB_PASSWORD=\n"}},
+		// The CMS settings do not work: the manual ones are used and the reason is kept.
+		{cms: "wordpress", from: "панель", manual: true, note: "nosuchdb", files: map[string]string{"wp-config.php": "<?php\ndefine('DB_NAME', 'nosuchdb');\ndefine('DB_USER', 'root');\ndefine('DB_PASSWORD', '');\ndefine('DB_HOST', '" + hp + "');\n"}},
+		// No CMS at all: manual settings only.
+		{cms: "", from: "панель", manual: true},
+		// The CMS settings do not work and there are no manual ones.
+		{cms: "wordpress", from: "wp-config.php", err: "nosuchdb", files: map[string]string{"wp-config.php": "<?php\ndefine('DB_NAME', 'nosuchdb');\ndefine('DB_USER', 'root');\ndefine('DB_PASSWORD', '');\ndefine('DB_HOST', '" + hp + "');\n"}},
+	}
+	for i := range len(cases) * 2 {
+		c, php := cases[i%len(cases)], []string{"7.4", "8.3"}[i/len(cases)]
+		httpPort := httpPorts[php]
+		name := "php" + php + "_" + c.cms
+		if c.manual {
+			name += "+manual"
+		}
+		t.Run(name, func(t *testing.T) {
+			for rel, body := range c.files {
+				p := filepath.Join(e.siteDir, filepath.FromSlash(rel))
+				os.MkdirAll(filepath.Dir(p), 0o755)
+				if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				defer os.Remove(p)
+			}
+			src := model.SiteSource{Protocol: model.ProtoSFTP, Host: "127.0.0.1", Port: sftpPort, User: "u", Password: "p", Root: "/",
+				URL: fmt.Sprintf("http://127.0.0.1:%d", httpPort), DB: true, CMS: "auto"}
+			if c.manual {
+				src.DBHost, src.DBName, src.DBUser = hp, "shop", "root"
+			}
+			s, err := Open(context.Background(), src, nil, func(string, string, ...any) {})
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.Close()
+			i := s.Info
+			if i.CMS != c.cms || i.DB == nil || i.DB.From != c.from {
+				t.Fatalf("cms %q, db %+v, dbError %q", i.CMS, i.DB, i.DBError)
+			}
+			if c.err != "" {
+				if !strings.Contains(i.DB.Error, c.err) {
+					t.Fatalf("error %q, want %q", i.DB.Error, c.err)
+				}
+				return
+			}
+			if i.DB.Error != "" || i.DB.Tables != 4 || !strings.Contains(i.DB.Note, c.note) || (c.note == "") != (i.DB.Note == "") {
+				t.Fatalf("db %+v", i.DB)
 			}
 		})
 	}

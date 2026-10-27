@@ -128,7 +128,7 @@ func streamOnce(t *testing.T, a *Agent, size int, plan model.ChunkPlan) (*model.
 	}
 	rec, _ := age.NewScryptRecipient("pa$$word")
 	rec.SetWorkFactor(10)
-	rf, _ := a.runStream(context.Background(), run, helperStream(size), "db.sql.gz.age", dests, plan, 6, rec)
+	rf, _ := a.runStream(context.Background(), run, helperStream(size), "db.sql.gz.age", dests, plan, 6, rec, &runEstimate{})
 	rf.Encrypted = true
 	run.RemoteDir = runDir
 	return run, rf

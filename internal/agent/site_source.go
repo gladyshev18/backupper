@@ -42,10 +42,17 @@ func (h hostKeys) Check(addr string, key ssh.PublicKey) error {
 
 func (a *Agent) hostKeys() site.HostKeys { return hostKeys{a.state} }
 
+// siteCMSNames are the CMS that script.php reads database settings from.
+var siteCMSNames = map[string]string{
+	"bitrix": "1С-Битрикс", "wordpress": "WordPress", "joomla": "Joomla", "drupal": "Drupal", "opencart": "OpenCart",
+	"modx": "MODX", "prestashop": "PrestaShop", "magento": "Magento", "dle": "DataLife Engine", "hostcms": "HostCMS",
+	"webasyst": "Webasyst", "umi": "UMI.CMS", "laravel": "Laravel",
+}
+
 func describeSite(i model.SiteInfo) string {
 	parts := []string{"PHP " + i.PHP}
-	if i.CMS != "" {
-		parts = append(parts, map[string]string{"bitrix": "1С-Битрикс", "wordpress": "WordPress"}[i.CMS])
+	if n := siteCMSNames[i.CMS]; n != "" {
+		parts = append(parts, n)
 	}
 	if i.TimeLimit > 0 {
 		parts = append(parts, fmt.Sprintf("лимит времени %d с", i.TimeLimit))
@@ -54,7 +61,11 @@ func describeSite(i model.SiteInfo) string {
 		parts = append(parts, "память "+chunk.HumanBytes(i.MemoryLimit))
 	}
 	if i.DB != nil && i.DB.Error == "" {
-		parts = append(parts, fmt.Sprintf("база %s (%d табл., %s, из %s)", i.DB.Name, i.DB.Tables, chunk.HumanBytes(int64(i.DB.Size)), i.DB.From))
+		from := "из " + i.DB.From
+		if i.DB.From == "панель" {
+			from = "доступ указан вручную"
+		}
+		parts = append(parts, fmt.Sprintf("база %s (%d табл., %s, %s)", i.DB.Name, i.DB.Tables, chunk.HumanBytes(int64(i.DB.Size)), from))
 	}
 	return strings.Join(parts, ", ")
 }
@@ -80,14 +91,16 @@ func (a *Agent) planSource(ctx context.Context, src model.Source, logf func(leve
 	sess.SetExcludes(src.Excludes)
 
 	name := Slug(defaultName(src))
-	mk := func(action, file, label string) stream {
+	mk := func(action, file, label string, known int64) stream {
 		return stream{file: file, label: label, open: func(ctx context.Context) (*started, error) {
-			var raw atomic.Int64
-			rc := sess.Stream(ctx, action, func(n int64) { raw.Add(n) })
+			var raw, est atomic.Int64
+			est.Store(known)
+			rc := sess.Stream(ctx, action, func(n int64) { raw.Add(n) }, est.Store)
 			return &started{
 				r:             rc,
 				precompressed: true,
 				raw:           raw.Load,
+				est:           est.Load,
 				wait:          func() (bool, error) { return false, nil },
 				cleanup:       func() { rc.Close() },
 			}, nil
@@ -96,13 +109,18 @@ func (a *Agent) planSource(ctx context.Context, src model.Source, logf func(leve
 	var out []stream
 	if cfg.DB {
 		label := "Сайт " + cfg.Host + ": база данных"
-		if sess.Info.DB != nil {
-			label = "Сайт " + cfg.Host + ": база " + sess.Info.DB.Name
+		var size int64 // table sizes: a rough guess of the dump size
+		if db := sess.Info.DB; db != nil {
+			label = "Сайт " + cfg.Host + ": база " + db.Name
+			if db.Error == "" {
+				size = int64(db.Size)
+			}
 		}
-		out = append(out, mk("db", name+".sql", label))
+		out = append(out, mk("db", name+".sql", label, size))
 	}
 	if cfg.Files {
-		out = append(out, mk("files", name+".tar", "Сайт "+cfg.Host+": файлы"))
+		// The script counts the archive size while listing the files.
+		out = append(out, mk("files", name+".tar", "Сайт "+cfg.Host+": файлы", 0))
 	}
 	return out, sess.Close, nil
 }

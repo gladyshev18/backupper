@@ -358,6 +358,9 @@ export namespace model {
 	    bytes: number;
 	    part: number;
 	    speedBps: number;
+	    estRaw?: number;
+	    // Go type: time
+	    since: any;
 	
 	    static createFrom(source: any = {}) {
 	        return new Progress(source);
@@ -371,7 +374,27 @@ export namespace model {
 	        this.bytes = source["bytes"];
 	        this.part = source["part"];
 	        this.speedBps = source["speedBps"];
+	        this.estRaw = source["estRaw"];
+	        this.since = this.convertValues(source["since"], null);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class LogLine {
 	    // Go type: time
@@ -497,6 +520,7 @@ export namespace model {
 	    files: RunFile[];
 	    bytes: number;
 	    rawBytes: number;
+	    estRawBytes?: number;
 	    chunkSize: number;
 	    chunkBuffer: string;
 	    uploads?: Record<string, UploadStat>;
@@ -523,6 +547,7 @@ export namespace model {
 	        this.files = this.convertValues(source["files"], RunFile);
 	        this.bytes = source["bytes"];
 	        this.rawBytes = source["rawBytes"];
+	        this.estRawBytes = source["estRawBytes"];
 	        this.chunkSize = source["chunkSize"];
 	        this.chunkBuffer = source["chunkBuffer"];
 	        this.uploads = this.convertValues(source["uploads"], UploadStat, true);
@@ -714,6 +739,7 @@ export namespace model {
 	export class JobView {
 	    id: string;
 	    name: string;
+	    kind?: string;
 	    sources: Source[];
 	    schedule: Schedule;
 	    storages: string[];
@@ -737,6 +763,7 @@ export namespace model {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
+	        this.kind = source["kind"];
 	        this.sources = this.convertValues(source["sources"], Source);
 	        this.schedule = this.convertValues(source["schedule"], Schedule);
 	        this.storages = source["storages"];
@@ -1089,6 +1116,7 @@ export namespace model {
 	export class Job {
 	    id: string;
 	    name: string;
+	    kind?: string;
 	    sources: Source[];
 	    schedule: Schedule;
 	    storages: string[];
@@ -1107,6 +1135,7 @@ export namespace model {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.name = source["name"];
+	        this.kind = source["kind"];
 	        this.sources = this.convertValues(source["sources"], Source);
 	        this.schedule = this.convertValues(source["schedule"], Schedule);
 	        this.storages = source["storages"];
@@ -1148,6 +1177,7 @@ export namespace model {
 	    size: number;
 	    server: string;
 	    error?: string;
+	    note?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SiteDB(source);
@@ -1163,6 +1193,7 @@ export namespace model {
 	        this.size = source["size"];
 	        this.server = source["server"];
 	        this.error = source["error"];
+	        this.note = source["note"];
 	    }
 	}
 	export class SiteInfo {
@@ -1179,6 +1210,7 @@ export namespace model {
 	    serverTime: number;
 	    top: string[];
 	    db?: SiteDB;
+	    dbError?: string;
 	    warnings?: string[];
 	
 	    static createFrom(source: any = {}) {
@@ -1200,6 +1232,7 @@ export namespace model {
 	        this.serverTime = source["serverTime"];
 	        this.top = source["top"];
 	        this.db = this.convertValues(source["db"], SiteDB);
+	        this.dbError = source["dbError"];
 	        this.warnings = source["warnings"];
 	    }
 	

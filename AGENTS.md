@@ -80,7 +80,11 @@ object returning sample data, then re-import `/src/main.tsx`. Never test against
 POST form `a` (action: info|db|files|cleanup), `p` (JSON params incl. opaque `state`), `t` (unix time, corrected by the
 hosting `Date` header), `n` (nonce), `s` = hex HMAC-SHA256(`sha256("mac"+secret)`, `a|t|n|p`). Response body =
 `iv(12) | AES-256-GCM(sha256("enc"+secret), 4-byte meta length | meta JSON | data) | tag(16)`; each `data` is one gzip
-member, so concatenated responses form a valid `.gz`. Bad signature → plain 404. Script name `backupper_<16 hex>.php`;
+member, so concatenated responses form a valid `.gz`. Bad signature → plain 404.
+Database access comes from the CMS settings files (`bk_cms_configs`: Bitrix, WordPress, Joomla, Drupal, OpenCart, MODX,
+PrestaShop, Magento, DLE, HostCMS, Webasyst, UMI.CMS, Laravel); the panel's manual settings are the fallback when those
+are missing or fail. After `info` the agent sends `dbFrom` (`cms`|`panel`) so dump portions do not retry a failing one.
+The `files` list response carries `est` — the exact tar size, used for the progress estimate. Script name `backupper_<16 hex>.php`;
 stale ones matching that exact pattern are deleted on the next run.
 
 ## Cloud layout

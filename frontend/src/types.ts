@@ -28,7 +28,8 @@ export interface SiteSource {
   url: string
   db: boolean
   files: boolean
-  cms: 'auto' | 'bitrix' | 'wordpress' | 'none'
+  /** 'auto', 'none' or a CMS id from siteCMS (util.ts). */
+  cms: string
   cmsExcludes: boolean
   dbHost?: string
   dbName?: string
@@ -40,7 +41,10 @@ export interface SiteSource {
 export interface SiteInfo {
   php: string; sapi: string; os: string; root: string; cms: string; timeLimit: number; memoryLimit: number
   diskFree: number; deflate: boolean; pdoMysql: boolean; top: string[]; warnings?: string[]
-  db?: { host: string; name: string; user: string; from: string; tables: number; size: number; server: string; error?: string }
+  /** note — why the CMS settings were not used (the manual ones were). */
+  db?: { host: string; name: string; user: string; from: string; tables: number; size: number; server: string; error?: string; note?: string }
+  /** No usable database settings at all. */
+  dbError?: string
 }
 
 export interface Schedule {
@@ -174,7 +178,11 @@ export interface RunFile {
   name: string; source: string; size: number; rawSize: number; sha256: string
   encrypted: boolean; parts: Part[]; error?: string
 }
-export interface Progress { stage: string; source: string; rawBytes: number; bytes: number; part: number; speedBps: number }
+export interface Progress {
+  stage: string; source: string; rawBytes: number; bytes: number; part: number; speedBps: number
+  /** Expected uncompressed size of the current file (0 — unknown) and when it started. */
+  estRaw?: number; since?: string
+}
 
 export interface Run {
   id: string; jobId: string; jobName: string; trigger: string
@@ -182,6 +190,8 @@ export interface Run {
   queuedAt: string; startedAt: string; finishedAt: string
   remoteDir: string; storages: string[]; files: RunFile[]
   bytes: number; rawBytes: number; chunkSize: number; chunkBuffer: string
+  /** Expected uncompressed total while running (from the last run and the sources); 0 — unknown. */
+  estRawBytes?: number
   error?: string; log?: LogLine[]; progress?: Progress
 }
 

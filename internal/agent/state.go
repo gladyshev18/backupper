@@ -273,6 +273,25 @@ func (s *State) ExpectedSize(jobID string) int64 {
 	return 0
 }
 
+// LastRaw is the uncompressed size of the last successful run of a job, in total
+// and per file name: the estimate for the next run.
+func (s *State) LastRaw(jobID string) (int64, map[string]int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.runs) - 1; i >= 0; i-- {
+		r := s.runs[i]
+		if r.JobID != jobID || (r.Status != model.RunSuccess && r.Status != model.RunWarning) {
+			continue
+		}
+		files := map[string]int64{}
+		for _, f := range r.Files {
+			files[f.Name] = f.RawSize
+		}
+		return r.RawBytes, files
+	}
+	return 0, nil
+}
+
 // LastBytes is the cloud size of the last successful run of a job.
 func (s *State) LastBytes(jobID string) int64 {
 	s.mu.Lock()

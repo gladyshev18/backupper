@@ -4,9 +4,9 @@ import {
   Pencil, Play, Plus, RefreshCw, Globe, Server as ServerIcon, Settings2, Trash2, Wrench, XCircle, CheckCircle2, Lock, FolderOpen,
 } from 'lucide-react'
 import { useApp } from '../App'
-import { api, onEvent } from '../api'
+import { api, errText, onEvent } from '../api'
 import type { BackupEntry, JobView, Run, ServerCheck, ServerStatus } from '../types'
-import { Alert, Bar, Button, Empty, Menu, Modal, StatusBadge, usePoll, useUI } from '../components/ui'
+import { Alert, Bar, Button, Empty, Menu, Modal, StatusBadge, Toggle, usePoll, useUI } from '../components/ui'
 import RunProgress from '../components/RunProgress'
 import { bytes, cls, dateTime, duration, kindLabels, policy, relative, retentionText, scheduleText, siteHost, sourceLabels } from '../util'
 import { locale, t } from '../i18n'
@@ -190,6 +190,12 @@ function JobsTab({ id, st, jobs, onEdit, refresh }: { id: string; st: ServerStat
     if (!await confirm(t('Удалить задачу «{name}»? Уже сделанные копии в облаке останутся.', { name: j.name }), t('Удалить'), true)) return
     await run('d' + j.id, async () => { await api.deleteJob(id, j.id); await refresh() })
   }
+  // Pausing keeps the schedule itself: switching back on resumes it unchanged.
+  const setScheduled = (j: JobView, on: boolean) => run('s' + j.id, async () => {
+    const { nextRun, lastRun, lastSize, cronError, ...job } = j
+    await api.saveJob(id, { ...job, schedule: { ...job.schedule, enabled: on } })
+    await refresh()
+  }, on ? t('Расписание включено') : t('Расписание выключено: задача запускается только вручную'))
   return (
     <div className="col">
       {jobs.map(j => {
@@ -208,7 +214,9 @@ function JobsTab({ id, st, jobs, onEdit, refresh }: { id: string; st: ServerStat
                 <span className="chip">→ {j.storages.map(sid => state.storages.find(s => s.id === sid)?.name || '?').join(', ')}</span>
               </div>
               <div className="row small muted mt8" style={{ gap: 16 }}>
-                <span className="row" style={{ gap: 5 }}><Clock size={13} /> {scheduleText(j.schedule)}</span>
+                <Toggle small on={j.schedule.enabled} disabled={busy === 's' + j.id} onChange={v => setScheduled(j, v)}
+                  title={j.schedule.enabled ? t('Выключить расписание') : t('Включить расписание')}
+                  label={<span className="row" style={{ gap: 5, whiteSpace: 'nowrap' }}><Clock size={13} /> {scheduleText(j.schedule)}</span>} />
                 {j.nextRun && <span>{t('следующий {when}', { when: relative(j.nextRun) })}</span>}
                 <span>{t('хранить: {n}', { n: retentionText(policy(j)) })}</span>
               </div>
@@ -232,8 +240,11 @@ function JobsTab({ id, st, jobs, onEdit, refresh }: { id: string; st: ServerStat
 export function HistoryTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; fixed?: boolean }) {
   const [jobId, setJobId] = useState(fixed ? jobs[0].id : '')
   const [runs, setRuns] = useState<Run[] | null>(null)
+  const [error, setError] = useState('')
   const [open, setOpen] = useState<Run | null>(null)
-  usePoll(() => { api.runs(id, jobId, 100).then(setRuns).catch(() => {}) }, 10000, [id, jobId])
+  usePoll(() => {
+    api.runs(id, jobId, 100).then(r => { setRuns(r || []); setError('') }).catch(e => { setError(errText(e)); setRuns(v => v || []) })
+  }, 10000, [id, jobId])
   const show = async (r: Run) => setOpen(await api.run(id, r.id))
   return (
     <>
@@ -243,8 +254,9 @@ export function HistoryTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; f
           {jobs.map(j => <option key={j.id} value={j.id}>{j.name}</option>)}
         </select>
       </div>}
+      {error && <Alert tone="danger"><span className="selectable">{error}</span></Alert>}
       <div className="card">
-        {!runs ? <div className="card-pad"><Bar value={0} indeterminate /></div> : runs.length === 0 ? <div className="empty small">{t('Запусков пока не было')}</div> : (
+        {!runs ? <div className="card-pad"><Bar value={0} indeterminate /></div> : runs.length === 0 ? <div className="empty small">{error ? t('Не удалось загрузить историю') : t('Запусков пока не было')}</div> : (
           <table className="table">
             <thead><tr><th>{t('Задача')}</th><th>{t('Запуск')}</th><th>{t('Начало')}</th><th>{t('Длительность')}</th><th>{t('Данные → архив')}</th><th>{t('Статус')}</th></tr></thead>
             <tbody>
@@ -323,7 +335,7 @@ export function BackupsTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; f
   const load = async () => {
     if (!jobId || !storageId) return
     setList(null); setError('')
-    try { setList(await api.backups(id, jobId, storageId)) } catch (e) { setError(String(e)); setList([]) }
+    try { setList(await api.backups(id, jobId, storageId) || []) } catch (e) { setError(String(e)); setList([]) }
   }
   useEffect(() => { load() }, [jobId, storageId])
   useEffect(() => onEvent('download', d => setDl(p => ({ ...p, [d.key]: d }))), [])

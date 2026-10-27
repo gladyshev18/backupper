@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -61,11 +62,27 @@ func Dial(ctx context.Context, s model.SiteSource, keys HostKeys) (Remote, error
 type ftpRemote struct{ c *ftp.ServerConn }
 
 func dialFTP(ctx context.Context, addr string, s model.SiteSource) (Remote, error) {
+	r, err := dialFTPOnce(ctx, addr, s, 0)
+	if err != nil && s.Protocol == model.ProtoFTPS && badTicketLifetime(err) {
+		// Some FTP servers send TLS 1.3 session tickets valid for more than the
+		// 7 days RFC 8446 allows and Go drops the connection; TLS 1.2 has no such
+		// check and still resumes the session for the data connection.
+		r, err = dialFTPOnce(ctx, addr, s, tls.VersionTLS12)
+	}
+	return r, err
+}
+
+func badTicketLifetime(err error) bool {
+	return strings.Contains(err.Error(), "session ticket with invalid lifetime")
+}
+
+func dialFTPOnce(ctx context.Context, addr string, s model.SiteSource, maxTLS uint16) (Remote, error) {
 	opts := []ftp.DialOption{ftp.DialWithContext(ctx), ftp.DialWithTimeout(30 * time.Second)}
 	if s.Protocol == model.ProtoFTPS {
 		cfg := &tls.Config{
 			ServerName:         s.Host,
 			InsecureSkipVerify: s.Insecure,
+			MaxVersion:         maxTLS,
 			// Many servers require the data connection to resume the control TLS session.
 			ClientSessionCache: tls.NewLRUClientSessionCache(4),
 		}
@@ -81,17 +98,52 @@ func dialFTP(ctx context.Context, addr string, s model.SiteSource) (Remote, erro
 	}
 	if err := c.Login(s.User, s.Password); err != nil {
 		c.Quit()
+		// Explicit FTPS (port 21) does the TLS handshake inside Login (AUTH TLS),
+		// so a certificate problem must not be reported as a wrong password.
+		if tlsErr := friendlyTLS(err); tlsErr != err {
+			return nil, tlsErr
+		}
+		if strings.Contains(err.Error(), "tls:") {
+			return nil, fmt.Errorf("ошибка TLS при входе на FTP: %w", err)
+		}
 		return nil, fmt.Errorf("FTP не принял логин или пароль: %w", err)
 	}
 	return &ftpRemote{c: c}, nil
 }
 
 func friendlyTLS(err error) error {
+	var hostErr x509.HostnameError
+	if errors.As(err, &hostErr) && hostErr.Certificate != nil && len(hostErr.Certificate.DNSNames) > 0 {
+		names := strings.Join(hostErr.Certificate.DNSNames, ", ")
+		// Hostings often give an IP while the certificate names the machine: its
+		// reverse DNS name usually matches and keeps the check on.
+		if name := matchingPTR(hostErr.Host, hostErr.Certificate); name != "" {
+			return fmt.Errorf("сертификат хостинга выдан на %s, а не на %s: укажите в «Сервер FTP» адрес %s (%w)", names, hostErr.Host, name, err)
+		}
+		return fmt.Errorf("сертификат хостинга выдан на %s, а не на %s: укажите в «Сервер FTP» имя из сертификата или включите «Не проверять сертификат» (%w)", names, hostErr.Host, err)
+	}
 	msg := err.Error()
 	if strings.Contains(msg, "certificate") || strings.Contains(msg, "x509") {
 		return fmt.Errorf("%w — сертификат хостинга не подходит к адресу; включите «Не проверять сертификат»", err)
 	}
 	return err
+}
+
+// matchingPTR returns the reverse DNS name of ip that the certificate is valid for.
+func matchingPTR(ip string, cert *x509.Certificate) string {
+	if net.ParseIP(ip) == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	names, _ := net.DefaultResolver.LookupAddr(ctx, ip)
+	for _, n := range names {
+		n = strings.TrimSuffix(n, ".")
+		if cert.VerifyHostname(n) == nil {
+			return n
+		}
+	}
+	return ""
 }
 
 func (r *ftpRemote) Upload(p string, data []byte) error { return r.c.Stor(p, bytes.NewReader(data)) }

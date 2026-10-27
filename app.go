@@ -240,10 +240,20 @@ func (a *App) Overview() []ServerStatus {
 	return out
 }
 
+// Lists below are never nil: agents answer "null" when there is nothing yet, and the
+// UI takes null for "still loading".
+
 func (a *App) Active(id string) ([]*model.Run, error) {
 	var runs []*model.Run
 	err := a.mgr.Call(id, http.MethodGet, "/api/active", nil, &runs, 15*time.Second)
-	return runs, err
+	return nonNil(runs), err
+}
+
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 func (a *App) SaveJob(serverID string, job model.Job) (model.Job, error) {
@@ -274,7 +284,7 @@ func (a *App) Runs(serverID, jobID string, limit int) ([]*model.Run, error) {
 	var runs []*model.Run
 	q := url.Values{"job": {jobID}, "limit": {fmt.Sprint(limit)}}
 	err := a.mgr.Call(serverID, http.MethodGet, "/api/runs?"+q.Encode(), nil, &runs, 0)
-	return runs, err
+	return nonNil(runs), err
 }
 
 func (a *App) Run(serverID, runID string) (*model.Run, error) {
@@ -306,7 +316,7 @@ func (a *App) Backups(serverID, jobID, storageID string) ([]model.BackupEntry, e
 	var out []model.BackupEntry
 	q := url.Values{"job": {jobID}, "storage": {storageID}}
 	err := a.mgr.Call(serverID, http.MethodGet, "/api/backups?"+q.Encode(), nil, &out, 3*time.Minute)
-	return out, err
+	return nonNil(out), err
 }
 
 func (a *App) DeleteBackup(serverID, storageID, dir string) error {

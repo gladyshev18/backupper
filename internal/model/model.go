@@ -34,9 +34,9 @@ type SiteSource struct {
 	URL         string `json:"url"`  // the same root over HTTP, e.g. https://site.ru
 	DB          bool   `json:"db"`
 	Files       bool   `json:"files"`
-	CMS         string `json:"cms"` // auto | bitrix | wordpress | none
+	CMS         string `json:"cms"` // auto | none | a CMS id of script.php (bitrix, wordpress, joomla, …)
 	CMSExcludes bool   `json:"cmsExcludes"`
-	DBHost      string `json:"dbHost,omitempty"` // manual database settings override CMS detection
+	DBHost      string `json:"dbHost,omitempty"` // manual database settings: used when the CMS files have none or they fail
 	DBName      string `json:"dbName,omitempty"`
 	DBUser      string `json:"dbUser,omitempty"`
 	DBPassword  string `json:"dbPassword,omitempty"`
@@ -396,6 +396,10 @@ type Progress struct {
 	Bytes    int64   `json:"bytes"`
 	Part     int     `json:"part"`
 	SpeedBps float64 `json:"speedBps"`
+	// EstRaw is the expected uncompressed size of the current file: counted by the
+	// source (files on a hosting) or taken from the last successful run; 0 = unknown.
+	EstRaw int64     `json:"estRaw,omitempty"`
+	Since  time.Time `json:"since"` // when the current file started
 }
 
 type UploadStat struct {
@@ -417,6 +421,7 @@ type Run struct {
 	Files       []RunFile             `json:"files"`
 	Bytes       int64                 `json:"bytes"`
 	RawBytes    int64                 `json:"rawBytes"`
+	EstRawBytes int64                 `json:"estRawBytes,omitempty"` // expected uncompressed total while running; 0 = unknown
 	ChunkSize   int64                 `json:"chunkSize"`
 	ChunkBuffer string                `json:"chunkBuffer"`
 	Uploads     map[string]UploadStat `json:"uploads,omitempty"`
@@ -508,13 +513,13 @@ type ChunkPlan struct {
 }
 
 type StorageTest struct {
-	OK        bool    `json:"ok"`
-	Error     string  `json:"error,omitempty"`
-	SpeedBps  float64 `json:"speedBps"`
-	Total     int64   `json:"total"`
-	Used      int64   `json:"used"`
-	MaxFile   int64   `json:"maxFile"`
-	ElapsedMs int64   `json:"elapsedMs"`
+	OK        bool     `json:"ok"`
+	Error     string   `json:"error,omitempty"`
+	SpeedBps  float64  `json:"speedBps"`
+	Total     int64    `json:"total"`
+	Used      int64    `json:"used"`
+	MaxFile   int64    `json:"maxFile"`
+	ElapsedMs int64    `json:"elapsedMs"`
 	Notes     []string `json:"notes,omitempty"` // what works only partly, e.g. missing bot rights
 }
 
@@ -559,6 +564,7 @@ type SiteInfo struct {
 	ServerTime  int64    `json:"serverTime"`
 	Top         []string `json:"top"`
 	DB          *SiteDB  `json:"db,omitempty"`
+	DBError     string   `json:"dbError,omitempty"` // no usable database settings at all
 	Warnings    []string `json:"warnings,omitempty"`
 }
 
@@ -571,4 +577,5 @@ type SiteDB struct {
 	Size   float64 `json:"size"`
 	Server string  `json:"server"`
 	Error  string  `json:"error,omitempty"`
+	Note   string  `json:"note,omitempty"` // why the CMS settings were not used (the panel's were)
 }
