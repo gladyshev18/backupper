@@ -25,6 +25,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"path"
 	"regexp"
@@ -125,7 +126,9 @@ func Open(ctx context.Context, src model.SiteSource, keys HostKeys, logf Logf) (
 	s.macKey = keyFrom("mac", s.secret)
 	s.encKey = keyFrom("enc", s.secret)
 	s.url = strings.TrimRight(strings.TrimSpace(src.URL), "/") + "/" + s.name + ".php"
+	jar, _ := cookiejar.New(nil)
 	s.http = &http.Client{
+		Jar: jar,
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -190,13 +193,21 @@ func (s *Session) rootOrDot() string {
 
 // checkClock learns the hosting clock from the Date header: requests carry a timestamp.
 func (s *Session) checkClock(ctx context.Context) error {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
-	req.Header.Set("User-Agent", userAgent)
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("сайт %s не отвечает: %w", s.src.URL, friendlyTLS(err))
+	var resp *http.Response
+	for try := 0; ; try++ {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
+		req.Header.Set("User-Agent", userAgent)
+		var err error
+		resp, err = s.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("сайт %s не отвечает: %w", s.src.URL, friendlyTLS(err))
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		resp.Body.Close()
+		if try > 0 || !s.passChallenge(body) {
+			break
+		}
 	}
-	resp.Body.Close()
 	if loc := resp.Header.Get("Location"); resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		return fmt.Errorf("сайт перенаправляет на %s — укажите в адресе сайта конечный адрес (например, с https или без www)", loc)
 	}
@@ -207,6 +218,25 @@ func (s *Session) checkClock(ctx context.Context) error {
 }
 
 const userAgent = "Mozilla/5.0 (compatible; Backupper/1.0)"
+
+// Bot protection of some hostings (Beget) answers every request without its cookie
+// with a tiny page that sets it from JavaScript and reloads, and refuses POST with 405.
+var challengeRe = regexp.MustCompile(`document\.cookie\s*=\s*['"]([A-Za-z0-9_.\-]+)=([^;'"]*)`)
+
+// passChallenge stores the cookie such a page sets; false if body is not one.
+func (s *Session) passChallenge(body []byte) bool {
+	if len(body) > 4096 || !bytes.Contains(body, []byte("location.reload")) {
+		return false
+	}
+	m := challengeRe.FindSubmatch(body)
+	if m == nil {
+		return false
+	}
+	u, _ := url.Parse(s.url)
+	s.http.Jar.SetCookies(u, []*http.Cookie{{Name: string(m[1]), Value: string(m[2]), Path: "/"}})
+	s.logf("info", "Сайт защищён от ботов проверкой cookie (%s) — агент её проходит", m[1])
+	return true
+}
 
 func (s *Session) baseParams() map[string]any {
 	p := map[string]any{"cms": s.src.CMS, "sec": s.sec, "max": s.maxBytes}
@@ -270,32 +300,46 @@ func (s *Session) sign(action, params string) url.Values {
 
 type retryable struct{ error }
 
-func (s *Session) call(ctx context.Context, action string, params map[string]any, m *meta) ([]byte, error) {
-	pj, _ := json.Marshal(params)
-	form := s.sign(action, string(pj))
+// post sends one signed request; every attempt is signed anew (fresh nonce).
+func (s *Session) post(ctx context.Context, action, params string) (*http.Response, []byte, error) {
+	form := s.sign(action, params)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := s.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
-		return nil, retryable{fmt.Errorf("запрос к скрипту: %w", err)}
+		return nil, nil, retryable{fmt.Errorf("запрос к скрипту: %w", err)}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 512<<20))
 	if err != nil {
-		return nil, retryable{fmt.Errorf("ответ скрипта оборвался: %w", err)}
+		return nil, nil, retryable{fmt.Errorf("ответ скрипта оборвался: %w", err)}
+	}
+	return resp, body, nil
+}
+
+func (s *Session) call(ctx context.Context, action string, params map[string]any, m *meta) ([]byte, error) {
+	pj, _ := json.Marshal(params)
+	resp, body, err := s.post(ctx, action, string(pj))
+	if err == nil && s.passChallenge(body) {
+		resp, body, err = s.post(ctx, action, string(pj))
+	}
+	if err != nil {
+		return nil, err
 	}
 	switch {
 	case resp.StatusCode == 404:
 		return nil, fmt.Errorf("по адресу %s скрипт не найден. Проверьте, что папка %s на FTP — это корень сайта %s", s.url, s.rootOrDot(), s.src.URL)
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		return nil, fmt.Errorf("сайт перенаправляет запрос на %s — укажите конечный адрес сайта", resp.Header.Get("Location"))
+	case resp.StatusCode == 405:
+		return nil, fmt.Errorf("хостинг не принимает POST-запросы к сайту (HTTP 405) — скорее всего, мешает защита от ботов или DDoS: отключите её для сайта в панели хостинга (%s)", snippet(body))
 	case resp.StatusCode != 200:
 		return nil, retryable{fmt.Errorf("хостинг ответил HTTP %d: %s", resp.StatusCode, snippet(body))}
 	}

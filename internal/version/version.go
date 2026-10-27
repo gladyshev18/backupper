@@ -2,4 +2,4 @@
 // whether the agent on a server needs an update.
 package version
 
-const Version = "1.3.4"
+const Version = "1.3.5"
