@@ -1,16 +1,16 @@
 import { useState } from 'react'
-import { AlertOctagon, CheckCircle2, Cloud, HardDrive, ListChecks, RefreshCw, Server as ServerIcon, Wifi } from 'lucide-react'
+import { AlertOctagon, ArrowUpCircle, CheckCircle2, Cloud, HardDrive, ListChecks, RefreshCw, Server as ServerIcon, Wifi } from 'lucide-react'
 import { useApp } from '../App'
-import { api } from '../api'
+import { api, errText } from '../api'
 import type { Run } from '../types'
-import { Bar, Button, Empty, StatusBadge, usePoll, useUI } from '../components/ui'
+import { Alert, Bar, Button, Empty, StatusBadge, usePoll, useUI } from '../components/ui'
 import RunProgress from '../components/RunProgress'
 import { bytes, dateTime, duration, relative } from '../util'
 import { t } from '../i18n'
 
 export default function Overview() {
-  const { state, statuses, refreshAll, go, addServer } = useApp()
-  const { run, busy } = useUI()
+  const { state, statuses, refreshAll, reload, go, addServer } = useApp()
+  const { run, busy, toast } = useUI()
   const [first, setFirst] = useState(true)
   const anyActive = Object.values(statuses).some(s => s.active?.length)
   usePoll(() => { refreshAll().finally(() => setFirst(false)) }, anyActive ? 3000 : 15000, [anyActive])
@@ -50,6 +50,22 @@ export default function Overview() {
   const ok = lastWeek.filter(r => r.status === 'success' || r.status === 'warning').length
   const failed = lastWeek.filter(r => r.status === 'failed').length
   const active = list.flatMap(x => (x.st?.active || []).map(r => ({ r, x })))
+  const outdated = list.filter(x => x.st?.online && x.st.outdated)
+
+  // Reinstalling restarts the agent and would break a running backup: such servers wait.
+  const updateAll = () => run('upd', async () => {
+    const busyNow = outdated.filter(x => x.st!.active?.length)
+    const todo = outdated.filter(x => !x.st!.active?.length)
+    const res = await Promise.allSettled(todo.map(x => api.installAgent(x.s.id)))
+    res.forEach((r, i) => {
+      if (r.status === 'rejected') toast('error', `${todo[i].s.name}: ${errText(r.reason)}`)
+    })
+    const done = res.filter(r => r.status === 'fulfilled').length
+    if (done) toast('success', t('Агент обновлён на серверах: {n}', { n: done }))
+    if (busyNow.length) toast('info', t('Пропущены — идёт бэкап: {names}. Обновите их после завершения.', { names: busyNow.map(x => x.s.name).join(', ') }))
+    await reload()
+    await refreshAll()
+  })
 
   return (
     <div className="page">
@@ -69,6 +85,19 @@ export default function Overview() {
         <div className="card stat"><div className="label"><CheckCircle2 size={14} /> {t('Успешно за 7 дней')}</div><div className="value" style={{ color: 'var(--success)' }}>{ok}</div><div className="foot">{t('выполненных бэкапов')}</div></div>
         <div className="card stat"><div className="label"><AlertOctagon size={14} /> {t('Ошибок за 7 дней')}</div><div className="value" style={{ color: failed ? 'var(--danger)' : undefined }}>{failed}</div><div className="foot">{failed ? t('проверьте историю') : t('всё в порядке')}</div></div>
       </div>
+
+      {outdated.length > 0 && (
+        <div className="mt16">
+          <Alert tone="warning" icon={<ArrowUpCircle size={17} />}>
+            <div className="row">
+              <span className="grow">{t('Агент устарел на серверах: {names}. Версия в панели — {v}.', { names: outdated.map(x => x.s.name).join(', '), v: state.version })}</span>
+              <Button size="sm" loading={busy === 'upd'} onClick={updateAll}>
+                {outdated.length > 1 ? t('Обновить на всех ({n})', { n: outdated.length }) : t('Обновить агент')}
+              </Button>
+            </div>
+          </Alert>
+        </div>
+      )}
 
       {active.length > 0 && (
         <>

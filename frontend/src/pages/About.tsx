@@ -1,4 +1,4 @@
-import { Github, Mail, Send, ShieldCheck } from 'lucide-react'
+import { ArrowUpCircle, CalendarClock, Cloud, Github, Globe, Lock, Mail, MemoryStick, Send, ShieldCheck } from 'lucide-react'
 import { useApp } from '../App'
 import { api } from '../api'
 import { t } from '../i18n'
@@ -10,7 +10,16 @@ const author = {
   github: 'https://github.com/gladyshev18/backupper',
 }
 
-const stack = ['Go', 'Wails', 'React', 'TypeScript', 'SSH', 'age', 'gzip', 'systemd']
+const stack = ['Go', 'Wails', 'React', 'TypeScript', 'SSH', 'age', 'gzip', 'systemd', 'PHP', 'Telegram Bot API']
+
+const features = [
+  { icon: MemoryStick, text: 'Потоковая выгрузка частями из памяти — свободное место на диске сервера не нужно' },
+  { icon: Cloud, text: 'Яндекс Диск, Облако Mail.ru, любой WebDAV и Telegram через свой сервер Bot API' },
+  { icon: Globe, text: 'Сайты на обычном хостинге по FTP, FTPS или SFTP — доступ к базе берётся из настроек 13 CMS' },
+  { icon: CalendarClock, text: 'Расписание и ротация по календарю: последние копии, по дням, неделям, месяцам и годам' },
+  { icon: Lock, text: 'Шифрование age, SSH-туннель к агенту, уведомления в Telegram прямо с сервера' },
+  { icon: ArrowUpCircle, text: 'Установка и обновление агента одной кнопкой — на одном сервере или сразу на всех' },
+]
 
 export default function About() {
   const { state } = useApp()
@@ -21,7 +30,7 @@ export default function About() {
       <div className="card about-hero">
         <div className="brand-logo about-logo"><ShieldCheck size={34} /></div>
         <h1>Backupper</h1>
-        <div className="muted">{t('Бэкапы серверов в Яндекс Диск и Облако Mail.ru')}</div>
+        <div className="muted">{t('Бэкапы серверов и сайтов на хостинге в облака и Telegram')}</div>
         <span className="badge accent mt12">{t('версия {v}', { v: state.version })}</span>
       </div>
 
@@ -43,6 +52,13 @@ export default function About() {
       <div className="card card-pad">
         <div className="muted">
           {t('Агент на сервере сам делает бэкапы по расписанию и потоком выгружает их в облако кусками, не занимая место на диске. Панель управляет агентами через SSH-туннель по вашему ключу.')}
+        </div>
+        <div className="grid g2 mt16" style={{ gap: 10 }}>
+          {features.map(({ icon: Icon, text }) => (
+            <div key={text} className="row small" style={{ alignItems: 'flex-start', gap: 8 }}>
+              <Icon size={15} className="faint" style={{ flexShrink: 0, marginTop: 2 }} /><span>{t(text)}</span>
+            </div>
+          ))}
         </div>
         <div className="row wrap mt16" style={{ gap: 6 }}>
           {stack.map(s => <span key={s} className="chip">{s}</span>)}
