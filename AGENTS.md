@@ -126,7 +126,9 @@ encrypted (agent refuses others: `needsEncryption`).
 - **Rotation / 48 hours**: a service message is sent with the first part; 49 h later the agent deletes it and checks the
   result (`editMessageReplyMarkup` → "not found" = deleted). If old messages cannot be deleted, `RotationBlocked()` turns
   rotation off for that storage, `/api/info` reports it in `storageNotes`, the job editor shows it.
-- Flood control: `429` waits `retry_after` (up to 6 times). Errors never contain the bot token.
+- Flood control: `429` waits `retry_after` (up to 6 times); albums are spaced by `storage.TelegramPace` per message
+  (~20 messages/min per chat), so the runner gives `Put(manifest.json)` `ManifestTimeout(parts)` instead of 2 minutes.
+  Each album deletes its temporary messages at once; a repeated `finish` skips albums already sent. Errors never contain the bot token.
 
 ## Status / not yet verified
 

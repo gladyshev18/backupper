@@ -314,8 +314,16 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 	snap := a.state.Run(run.ID)
 	man := model.Manifest{Version: 1, Server: a.serverName(), JobID: job.ID, JobName: job.Name, Status: status, StartedAt: started, Finished: time.Now(), Files: snap.Files}
 	mb, _ := json.MarshalIndent(man, "", "  ")
+	parts := 0
+	for _, f := range man.Files {
+		parts += len(f.Parts)
+	}
 	for _, d := range dests {
-		mctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		limit := manifestTimeout(d, parts)
+		if limit > 5*time.Minute {
+			a.logf(run, "info", "Публикация копии в %s: %d частей, это займёт до %d мин", a.storageName(d.id), parts, int(limit.Minutes()))
+		}
+		mctx, cancel := context.WithTimeout(ctx, limit)
 		err := d.st.Put(mctx, path.Join(d.dir, "manifest.json"), bytes.NewReader(mb), int64(len(mb)))
 		cancel()
 		if err != nil {
@@ -356,6 +364,15 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 		return status, strings.Join(errs, "; ")
 	}
 	return status, ""
+}
+
+// manifestTimeout: manifest.json is one request for most clouds, but Telegram
+// re-sends every part as an album message under the chat's flood limit.
+func manifestTimeout(d dest, parts int) time.Duration {
+	if mt, ok := d.st.(interface{ ManifestTimeout(int) time.Duration }); ok {
+		return mt.ManifestTimeout(parts)
+	}
+	return 2 * time.Minute
 }
 
 // rotationBlocked is the reason a storage cannot delete old copies (Telegram

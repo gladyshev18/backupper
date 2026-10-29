@@ -26,6 +26,10 @@ import (
 // TelegramMaxFile is the upload limit of a Bot API server in --local mode.
 const TelegramMaxFile = 2000 << 20
 
+// TelegramPace is the gap per message between re-sent albums: a bot may post about
+// 20 messages a minute to one chat, and every document of an album counts. Tests set 0.
+var TelegramPace = 3 * time.Second
+
 // Telegram keeps backups as documents in a chat (usually a private channel)
 // through an own Bot API server. The Bot API cannot read chat history, so the
 // folder tree lives in a local index on the agent; every finished copy also
@@ -507,7 +511,26 @@ func groups(n int) []int {
 	return out
 }
 
+// ManifestTimeout is how long Put(manifest.json) may take: every part is re-sent
+// at the pace the chat allows, so a copy of 240 parts needs about 12 minutes.
+func (t *Telegram) ManifestTimeout(parts int) time.Duration {
+	return 2*time.Minute + time.Duration(parts)*(TelegramPace+2*time.Second)
+}
+
+func pause(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // finish turns the uploaded parts of a run into albums and posts the manifest.
+// It may be repeated after an interruption: albums already sent are kept.
 func (t *Telegram) finish(ctx context.Context, dir string, data []byte) error {
 	var man model.Manifest
 	if err := json.Unmarshal(data, &man); err != nil {
@@ -518,6 +541,7 @@ func (t *Telegram) finish(ctx context.Context, dir string, data []byte) error {
 	var stale []int
 	parts := 0
 	var total int64
+	var wait time.Duration // owed to the flood limit for the messages just sent
 	for _, f := range man.Files {
 		n := len(f.Parts)
 		if n == 0 {
@@ -537,6 +561,21 @@ func (t *Telegram) finish(ctx context.Context, dir string, data []byte) error {
 		}
 		at := 0
 		for _, g := range groups(n) {
+			fresh := false
+			for k := at; k < at+g; k++ {
+				fresh = fresh || have[k].Staging
+			}
+			if !fresh {
+				// Sent as an album by an earlier attempt that did not reach the manifest.
+				for k := at; k < at+g; k++ {
+					idx.Messages[f.Parts[k].Name] = model.TelegramRef{MessageID: have[k].MessageID, FileID: have[k].FileID}
+				}
+				at += g
+				continue
+			}
+			if err := pause(ctx, wait); err != nil {
+				return fmt.Errorf("%s: альбом частей: %w", f.Name, err)
+			}
 			var media []map[string]any
 			for k := at; k < at+g; k++ {
 				media = append(media, map[string]any{
@@ -557,9 +596,11 @@ func (t *Telegram) finish(ctx context.Context, dir string, data []byte) error {
 			if err != nil {
 				return fmt.Errorf("%s: альбом частей: %w", f.Name, err)
 			}
+			wait = time.Duration(g) * TelegramPace
 			if len(msgs) != g {
 				return fmt.Errorf("%s: Telegram вернул %d сообщений вместо %d", f.Name, len(msgs), g)
 			}
+			var old []int
 			t.ix.mu.Lock()
 			run := t.ix.run(dir)
 			for i, m := range msgs {
@@ -568,14 +609,18 @@ func (t *Telegram) finish(ctx context.Context, dir string, data []byte) error {
 				if m.Document != nil {
 					e.FileID = m.Document.FileID
 				}
-				if have[k].Staging {
-					stale = append(stale, have[k].MessageID)
-				}
+				// The temporary message, or the album of an earlier attempt that this one replaces.
+				old = append(old, have[k].MessageID)
 				run.Files[f.Parts[k].Name] = &e
 				idx.Messages[f.Parts[k].Name] = model.TelegramRef{MessageID: e.MessageID, FileID: e.FileID}
 			}
 			t.ix.save()
 			t.ix.mu.Unlock()
+			// The index no longer knows the old messages, so they go now: an interrupted
+			// finish must not leave them in the chat for good.
+			if t.deleteIDs(ctx, old) != nil {
+				stale = append(stale, old...)
+			}
 			at += g
 		}
 		parts += n
@@ -590,10 +635,16 @@ func (t *Telegram) finish(ctx context.Context, dir string, data []byte) error {
 			delete(t.ix.run(dir).Files, name)
 		}
 	}
+	if e := t.ix.run(dir).Files["manifest.json"]; e != nil {
+		stale = append(stale, e.MessageID)
+	}
 	t.ix.mu.Unlock()
 
 	man.Telegram = idx
 	out, _ := json.MarshalIndent(man, "", "  ")
+	if err := pause(ctx, wait); err != nil {
+		return fmt.Errorf("manifest.json: %w", err)
+	}
 	var m tgMessage
 	err := t.do(ctx, "sendDocument", fileBody(map[string]string{
 		"chat_id":                        t.chat,

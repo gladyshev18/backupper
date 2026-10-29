@@ -25,6 +25,7 @@ func tgConfig(f *telegramtest.Fake) model.Storage {
 func tgStorage(t *testing.T, f *telegramtest.Fake) *Telegram {
 	t.Helper()
 	SetDataDir(t.TempDir())
+	TelegramPace = 0
 	st, err := New(tgConfig(f))
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +197,105 @@ func TestTelegramFloodWait(t *testing.T) {
 	f.Flood = 1
 	if err := st.Put(context.Background(), "/Backupper/a/b/2026-10-25_03-00-00/x.part0001", bytes.NewReader([]byte("hello")), 5); err != nil {
 		t.Fatalf("429 must be waited out: %v", err)
+	}
+}
+
+// putParts uploads the temporary part messages and returns the manifest for them.
+func putParts(t *testing.T, st *Telegram, dir string, parts int) []byte {
+	t.Helper()
+	rf := model.RunFile{Name: "site.tar.gz.age", Encrypted: true}
+	for i := 1; i <= parts; i++ {
+		name := fmt.Sprintf("%s.part%04d", rf.Name, i)
+		data := []byte(fmt.Sprintf("part %d", i))
+		if err := st.Put(context.Background(), path.Join(dir, name), bytes.NewReader(data), int64(len(data))); err != nil {
+			t.Fatal(err)
+		}
+		rf.Parts = append(rf.Parts, model.Part{Name: name, Size: int64(len(data))})
+		rf.Size += int64(len(data))
+	}
+	mb, _ := json.Marshal(model.Manifest{Version: 1, Server: "re308", JobName: "Сайт", Status: model.RunSuccess, StartedAt: time.Now(), Files: []model.RunFile{rf}})
+	return mb
+}
+
+// A manifest interrupted between albums leaves no temporary messages of the albums
+// already sent, and the next attempt sends only the rest.
+func TestTelegramFinishResumes(t *testing.T) {
+	f := telegramtest.New(t)
+	st := tgStorage(t, f)
+	dir := "/Backupper/sites/alive_ru/2026-10-29_03-00-00"
+	mb := putParts(t, st, dir, 25) // albums of 9, 8, 8
+	man := path.Join(dir, "manifest.json")
+
+	f.FailFrom = map[string]int{"sendMediaGroup": 2}
+	if err := st.Put(context.Background(), man, bytes.NewReader(mb), int64(len(mb))); err == nil {
+		t.Fatal("a failed album must fail the manifest")
+	}
+	temp := 0
+	for _, m := range f.Messages() {
+		if strings.Contains(m.Caption, "идёт загрузка") {
+			temp++
+			for k := 1; k <= 9; k++ {
+				if strings.Contains(m.Caption, fmt.Sprintf("часть %d —", k)) {
+					t.Errorf("temporary message of a part already in an album: %q", m.Caption)
+				}
+			}
+		}
+	}
+	if temp != 16 {
+		t.Fatalf("temporary messages after the first album: %d, want 16", temp)
+	}
+
+	f.FailFrom = nil
+	if err := st.Put(context.Background(), man, bytes.NewReader(mb), int64(len(mb))); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.Calls("sendMediaGroup"); n != 4 {
+		t.Fatalf("sendMediaGroup calls: %d, want 1 + 1 failed + 2 left", n)
+	}
+	docs, albums := 0, map[string]int{}
+	for _, m := range f.Messages() {
+		if strings.Contains(m.Caption, "идёт загрузка") {
+			t.Errorf("temporary message left: %q", m.Caption)
+		}
+		if m.FileID != "" {
+			docs++
+			if m.Group != "" {
+				albums[m.Group]++
+			}
+		}
+	}
+	if docs != 26 || len(albums) != 3 {
+		t.Fatalf("documents %d (want 25 parts + manifest), albums %v (want 9, 8, 8)", docs, albums)
+	}
+	rc, err := st.Get(context.Background(), man)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got model.Manifest
+	json.NewDecoder(rc).Decode(&got)
+	rc.Close()
+	if got.Telegram == nil || len(got.Telegram.Messages) != 25 {
+		t.Fatalf("manifest index must list every part: %+v", got.Telegram)
+	}
+}
+
+// Albums are spaced out so that a big copy stays under the chat's flood limit.
+func TestTelegramFinishPace(t *testing.T) {
+	f := telegramtest.New(t)
+	st := tgStorage(t, f)
+	dir := "/Backupper/re308/sajt/2026-10-25_03-00-00"
+	mb := putParts(t, st, dir, 12) // albums of 6 and 6
+	TelegramPace = 30 * time.Millisecond
+	defer func() { TelegramPace = 0 }()
+	start := time.Now()
+	if err := st.Put(context.Background(), path.Join(dir, "manifest.json"), bytes.NewReader(mb), int64(len(mb))); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d < 12*TelegramPace {
+		t.Fatalf("finish took %v, want at least %v (6 + 6 messages before the manifest)", d, 12*TelegramPace)
+	}
+	if st.ManifestTimeout(240) < 240*TelegramPace {
+		t.Fatal("manifest timeout must cover the pace of every part")
 	}
 }
 

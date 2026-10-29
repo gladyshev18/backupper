@@ -51,6 +51,8 @@ type Fake struct {
 
 	// Flood answers 429 to this many next calls.
 	Flood int
+	// FailFrom answers 500 to a method from its N-th call on (counting from 1).
+	FailFrom map[string]int
 	// NoOldDelete refuses to delete messages older than 48 hours; with
 	// SilentOldDelete it answers ok but keeps them (to test the double check).
 	NoOldDelete     bool
@@ -202,6 +204,10 @@ func (f *Fake) handle(w http.ResponseWriter, r *http.Request) {
 	if f.Flood > 0 {
 		f.Flood--
 		fail(w, 429, "Too Many Requests: retry after 1", map[string]any{"parameters": map[string]any{"retry_after": 1}})
+		return
+	}
+	if n := f.FailFrom[method]; n > 0 && f.calls[method] >= n {
+		fail(w, 500, "Internal Server Error", nil)
 		return
 	}
 	str := func(k string) string { v, _ := params[k].(string); return v }

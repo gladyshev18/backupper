@@ -17,11 +17,13 @@ import (
 
 	"backupper/internal/chunk"
 	"backupper/internal/model"
+	"backupper/internal/storage"
 	"backupper/internal/storage/telegramtest"
 )
 
 func newTelegramAgent(t *testing.T, f *telegramtest.Fake) *Agent {
 	dir := t.TempDir()
+	storage.TelegramPace = 0
 	cfg := Config{
 		Token:    "secret",
 		Settings: model.Settings{ServerName: "re308", EncryptionPassword: "pa$$word"},
