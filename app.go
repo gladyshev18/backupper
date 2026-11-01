@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,9 +28,10 @@ import (
 
 // App is bound to the frontend: every exported method is callable from JS.
 type App struct {
-	ctx   context.Context
-	store *desktop.Store
-	mgr   *desktop.Manager
+	ctx            context.Context
+	store          *desktop.Store
+	mgr            *desktop.Manager
+	siteTransferMu sync.Mutex
 }
 
 func NewApp(store *desktop.Store) *App {
@@ -268,6 +270,126 @@ func (a *App) SaveJob(serverID string, job model.Job) (model.Job, error) {
 
 func (a *App) DeleteJob(serverID, jobID string) error {
 	return a.mgr.Call(serverID, http.MethodDelete, "/api/jobs/"+url.PathEscape(jobID), nil, nil, 0)
+}
+
+func (a *App) siteJob(serverID, jobID string) (model.Job, bool, error) {
+	var info model.AgentInfo
+	if err := a.mgr.Call(serverID, http.MethodGet, "/api/info", nil, &info, 0); err != nil {
+		return model.Job{}, false, err
+	}
+	if info.Version != version.Version {
+		return model.Job{}, false, errors.New("обновите агент до версии панели")
+	}
+	for _, v := range info.Jobs {
+		if v.ID == jobID {
+			return v.Job, true, nil
+		}
+	}
+	return model.Job{}, false, nil
+}
+
+func (a *App) pauseSite(serverID, jobID string) (model.Job, error) {
+	var job model.Job
+	err := a.mgr.Call(serverID, http.MethodPost, "/api/jobs/"+url.PathEscape(jobID)+"/site-pause", nil, &job, 0)
+	return job, err
+}
+
+func (a *App) copySiteData(source, oldID, target, newID, name string) error {
+	q := url.Values{"job": {oldID}, "name": {name}}
+	var data json.RawMessage
+	if err := a.mgr.Call(source, http.MethodGet, "/api/site-transfer?"+q.Encode(), nil, &data, 0); err != nil {
+		return fmt.Errorf("чтение старого сервера: %w", err)
+	}
+	if err := a.mgr.Call(target, http.MethodPost, "/api/jobs/"+url.PathEscape(newID)+"/site-transfer", data, nil, 0); err != nil {
+		return fmt.Errorf("запись на новый сервер: %w", err)
+	}
+	return nil
+}
+
+// MoveSite is retryable: the destination records the source and the import phase.
+func (a *App) MoveSite(source, target string, desired model.Job) (model.Job, error) {
+	a.siteTransferMu.Lock()
+	defer a.siteTransferMu.Unlock()
+	if source == target || desired.ID == "" || desired.Kind != model.JobSite {
+		return model.Job{}, errors.New("неверные параметры переноса")
+	}
+	dst, exists, err := a.siteJob(target, desired.ID)
+	if err != nil {
+		return dst, err
+	}
+	old, oldExists, err := a.siteJob(source, desired.ID)
+	if err != nil {
+		return dst, err
+	}
+	if exists && !dst.Migrating && !oldExists && dst.Kind == model.JobSite && dst.Name == desired.Name {
+		return dst, nil // The final response may have been lost after activation.
+	}
+	if exists && (!dst.Migrating || dst.MigrationSource != source) {
+		return dst, errors.New("на новом сервере уже есть задача с таким идентификатором")
+	}
+	if oldExists {
+		if old.Kind != model.JobSite || old.Name != desired.Name {
+			return dst, errors.New("при переносе нельзя менять название сайта")
+		}
+		if _, err := a.pauseSite(source, old.ID); err != nil {
+			return dst, err
+		}
+	} else if !exists || !dst.MigrationImported {
+		return dst, errors.New("исходный сайт не найден, а перенос ещё не завершён")
+	}
+	if !exists {
+		desired.Migrating, desired.MigrationSource, desired.MigrationImported = true, source, false
+		dst, err = a.SaveJob(target, desired)
+		if err != nil {
+			return dst, fmt.Errorf("исходный сайт приостановлен; повторите перенос: %w", err)
+		}
+	}
+	if !dst.MigrationImported {
+		if err := a.copySiteData(source, desired.ID, target, dst.ID, dst.Name); err != nil {
+			return dst, fmt.Errorf("сайты приостановлены; повторите перенос: %w", err)
+		}
+	}
+	if oldExists {
+		if err := a.DeleteJob(source, old.ID); err != nil {
+			return dst, fmt.Errorf("данные перенесены, но старый сайт не удалён; повторите перенос: %w", err)
+		}
+	}
+	dst.Migrating, dst.MigrationSource, dst.MigrationImported = false, "", false
+	if dst, err = a.SaveJob(target, dst); err != nil {
+		return dst, fmt.Errorf("данные перенесены, но сайт приостановлен; повторите перенос: %w", err)
+	}
+	return dst, nil
+}
+
+// RestoreSiteData handles sites already moved by older panel versions.
+func (a *App) RestoreSiteData(source, oldID, target, newID string) error {
+	a.siteTransferMu.Lock()
+	defer a.siteTransferMu.Unlock()
+	if source == target || oldID == "" {
+		return errors.New("выберите другой сервер и исходную задачу")
+	}
+	if _, _, err := a.siteJob(source, oldID); err != nil {
+		return err
+	}
+	job, ok, err := a.siteJob(target, newID)
+	if err != nil {
+		return err
+	}
+	if !ok || job.Kind != model.JobSite {
+		return errors.New("сайт не найден")
+	}
+	if job.MigrationSource != "" {
+		return errors.New("сначала завершите перенос сайта")
+	}
+	if _, err = a.pauseSite(target, newID); err != nil {
+		return err
+	}
+	if err = a.copySiteData(source, oldID, target, newID, job.Name); err != nil {
+		return fmt.Errorf("сайт приостановлен; повторите восстановление: %w", err)
+	}
+	job.Migrating = false
+	_, err = a.SaveJob(target, job)
+	return err
 }
 
 func (a *App) RunJob(serverID, jobID string) (*model.Run, error) {

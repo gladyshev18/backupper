@@ -52,9 +52,7 @@ export default function JobEditor({ serverId, job, site, onClose, onSaved }: {
     const { nextRun, lastRun, lastSize, cronError, ...clean } = j as JobView
     clean.keep = isCalendar(clean.retention) ? 0 : clean.retention.last
     if (job && sid !== serverId) {
-      // A site moved to another server: create it there first, then drop the old one.
-      const saved = await api.saveJob(sid, { ...clean, id: '' })
-      await api.deleteJob(serverId, job.id)
+      const saved = await api.moveSite(serverId, sid, clean)
       onSaved(sid, saved.id)
       return
     }
@@ -203,7 +201,7 @@ function RelaySection({ sid, setSid, moved, onAddServer }: { sid: string; setSid
         <div className="hint small faint mt8">
           {t('Агент этого сервера заходит на хостинг и выгружает копии в облако. Подойдёт любой сервер: от него зависят только скорость и расписание, а копии сайта лежат в своей папке.')}
         </div>
-        {moved && <div className="mt8"><Alert>{t('Сайт переедет на другой сервер. Копии в облаке останутся на месте, а история запусков — на прежнем сервере.')}</Alert></div>}
+        {moved && <div className="mt8"><Alert>{t('История и индекс Telegram будут перенесены на новый сервер. При переносе название сайта менять нельзя.')}</Alert></div>}
         {!sid && <div className="mt8"><Alert tone="warning">{t('Нужен сервер на связи с агентом версии {v}. Откройте сервер в меню слева, чтобы установить или обновить агент.', { v: state.version })}</Alert></div>}
       </>}
     </div>

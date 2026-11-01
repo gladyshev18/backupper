@@ -60,7 +60,7 @@ func (a *Agent) Reschedule() {
 		delete(a.entries, id)
 	}
 	for _, j := range a.state.Config().Jobs {
-		if !j.Schedule.Enabled {
+		if !j.Schedule.Enabled || j.Migrating {
 			continue
 		}
 		expr, err := j.Schedule.CronExpr()
@@ -89,24 +89,25 @@ func (a *Agent) NextRun(jobID string) *time.Time {
 
 // Enqueue adds a run; one job never has two runs waiting at once.
 func (a *Agent) Enqueue(jobID, trigger string) (*model.Run, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	job, ok := a.state.Job(jobID)
 	if !ok {
 		return nil, fmt.Errorf("задача не найдена")
 	}
-	a.mu.Lock()
+	if job.Migrating {
+		return nil, fmt.Errorf("сайт переносится")
+	}
 	if a.active != nil && a.active.JobID == jobID {
-		a.mu.Unlock()
 		return nil, fmt.Errorf("задача уже выполняется")
 	}
 	for _, r := range a.queue {
 		if r.JobID == jobID {
-			a.mu.Unlock()
 			return nil, fmt.Errorf("задача уже в очереди")
 		}
 	}
 	run := &model.Run{ID: NewID(), JobID: job.ID, JobName: job.Name, Trigger: trigger, Status: model.RunQueued, QueuedAt: time.Now()}
 	a.queue = append(a.queue, run)
-	a.mu.Unlock()
 	a.state.AddRun(run)
 	select {
 	case a.wake <- struct{}{}:
@@ -123,6 +124,7 @@ func (a *Agent) worker(ctx context.Context) {
 		if len(a.queue) > 0 {
 			run = a.queue[0]
 			a.queue = a.queue[1:]
+			a.active = run
 		}
 		a.mu.Unlock()
 		if run == nil {
@@ -138,11 +140,14 @@ func (a *Agent) worker(ctx context.Context) {
 			a.state.WithRun(run, func(r *model.Run) {
 				r.Status, r.Error, r.FinishedAt = model.RunFailed, "задача удалена", time.Now()
 			})
+			a.mu.Lock()
+			a.active = nil
+			a.mu.Unlock()
 			continue
 		}
 		rctx, cancel := context.WithCancel(ctx)
 		a.mu.Lock()
-		a.active, a.cancel = run, cancel
+		a.cancel = cancel
 		a.mu.Unlock()
 		a.execute(rctx, run, job)
 		cancel()
@@ -156,7 +161,7 @@ func (a *Agent) worker(ctx context.Context) {
 func (a *Agent) Cancel(runID string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.active != nil && a.active.ID == runID {
+	if a.active != nil && a.active.ID == runID && a.cancel != nil {
 		a.cancel()
 		return true
 	}

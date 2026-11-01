@@ -740,6 +740,9 @@ export namespace model {
 	    id: string;
 	    name: string;
 	    kind?: string;
+	    migrating?: boolean;
+	    migrationSource?: string;
+	    migrationImported?: boolean;
 	    sources: Source[];
 	    schedule: Schedule;
 	    storages: string[];
@@ -764,6 +767,9 @@ export namespace model {
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.kind = source["kind"];
+	        this.migrating = source["migrating"];
+	        this.migrationSource = source["migrationSource"];
+	        this.migrationImported = source["migrationImported"];
 	        this.sources = this.convertValues(source["sources"], Source);
 	        this.schedule = this.convertValues(source["schedule"], Schedule);
 	        this.storages = source["storages"];
@@ -1117,6 +1123,9 @@ export namespace model {
 	    id: string;
 	    name: string;
 	    kind?: string;
+	    migrating?: boolean;
+	    migrationSource?: string;
+	    migrationImported?: boolean;
 	    sources: Source[];
 	    schedule: Schedule;
 	    storages: string[];
@@ -1136,6 +1145,9 @@ export namespace model {
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.kind = source["kind"];
+	        this.migrating = source["migrating"];
+	        this.migrationSource = source["migrationSource"];
+	        this.migrationImported = source["migrationImported"];
 	        this.sources = this.convertValues(source["sources"], Source);
 	        this.schedule = this.convertValues(source["schedule"], Schedule);
 	        this.storages = source["storages"];

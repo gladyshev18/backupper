@@ -78,6 +78,9 @@ export interface Job {
   name: string
   /** 'site' — a site from the "Sites on hosting" section: one site source, copies in sites/<name>. */
   kind?: 'site'
+  migrating?: boolean
+  migrationSource?: string
+  migrationImported?: boolean
   sources: Source[]
   schedule: Schedule
   storages: string[]

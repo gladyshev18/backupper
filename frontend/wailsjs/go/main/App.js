@@ -58,6 +58,10 @@ export function InstallTelegramServer(arg1) {
   return window['go']['main']['App']['InstallTelegramServer'](arg1);
 }
 
+export function MoveSite(arg1, arg2, arg3) {
+  return window['go']['main']['App']['MoveSite'](arg1, arg2, arg3);
+}
+
 export function NextRuns(arg1, arg2, arg3) {
   return window['go']['main']['App']['NextRuns'](arg1, arg2, arg3);
 }
@@ -84,6 +88,10 @@ export function Probe(arg1, arg2) {
 
 export function ResetHostKey(arg1) {
   return window['go']['main']['App']['ResetHostKey'](arg1);
+}
+
+export function RestoreSiteData(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['RestoreSiteData'](arg1, arg2, arg3, arg4);
 }
 
 export function RetentionPreview(arg1, arg2, arg3) {

@@ -34,6 +34,8 @@ export function InstallAgent(arg1:string):Promise<string>;
 
 export function InstallTelegramServer(arg1:model.Storage):Promise<main.TgInstallResult>;
 
+export function MoveSite(arg1:string,arg2:string,arg3:model.Job):Promise<model.Job>;
+
 export function NextRuns(arg1:model.Schedule,arg2:number,arg3:number):Promise<Array<string>>;
 
 export function OpenURL(arg1:string):Promise<void>;
@@ -47,6 +49,8 @@ export function Plan(arg1:string,arg2:model.Job,arg3:string):Promise<model.Chunk
 export function Probe(arg1:string,arg2:model.Source):Promise<model.ProbeResult>;
 
 export function ResetHostKey(arg1:string):Promise<void>;
+
+export function RestoreSiteData(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function RetentionPreview(arg1:model.Schedule,arg2:number,arg3:model.Retention):Promise<main.RetentionPreview>;
 

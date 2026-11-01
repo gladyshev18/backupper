@@ -171,12 +171,8 @@ func (s *State) WithRun(r *model.Run, fn func(r *model.Run)) {
 
 func (s *State) SaveHistory() {
 	s.mu.Lock()
-	b, err := json.Marshal(s.runs)
-	s.mu.Unlock()
-	if err == nil {
-		_ = os.MkdirAll(s.paths.DataDir, 0o700)
-		_ = os.WriteFile(s.paths.history(), b, 0o600)
-	}
+	defer s.mu.Unlock()
+	_ = writeJSON(s.paths.history(), s.runs, 0o600)
 }
 
 func cloneRun(r *model.Run, withLog bool) *model.Run {
@@ -216,6 +212,41 @@ func (s *State) Runs(jobID string, limit int, withLog bool) []*model.Run {
 		}
 	}
 	return out
+}
+
+// ImportSiteRuns merges completed records without overwriting the destination's history.
+func (s *State) ImportSiteRuns(jobID string, incoming []*model.Run) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := make(map[string]*model.Run, len(s.runs))
+	for _, r := range s.runs {
+		seen[r.ID] = r
+	}
+	next := append([]*model.Run(nil), s.runs...)
+	for _, r := range incoming {
+		if r == nil || r.ID == "" || r.Status == model.RunQueued || r.Status == model.RunRunning {
+			return fmt.Errorf("некорректная запись истории")
+		}
+		if old := seen[r.ID]; old != nil {
+			if old.JobID != jobID {
+				return fmt.Errorf("конфликт идентификатора запуска %s", r.ID)
+			}
+			continue
+		}
+		c := cloneRun(r, true)
+		c.JobID = jobID
+		seen[c.ID] = c
+		next = append(next, c)
+	}
+	if len(next) > maxRuns {
+		return fmt.Errorf("история не помещается: %d записей при ограничении %d", len(next), maxRuns)
+	}
+	sort.SliceStable(next, func(i, j int) bool { return next[i].QueuedAt.Before(next[j].QueuedAt) })
+	if err := writeJSON(s.paths.history(), next, 0o600); err != nil {
+		return err
+	}
+	s.runs = next
+	return nil
 }
 
 func (s *State) Run(id string) *model.Run {

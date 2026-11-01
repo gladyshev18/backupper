@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -256,6 +257,119 @@ type tgIndex struct {
 	Runs  map[string]*tgRun `json:"runs"` // folder → its messages
 	TOC   map[string]int    `json:"toc"`  // server folder → pinned table of contents
 	Probe tgProbe           `json:"probe"`
+}
+
+// TelegramSiteIndex contains only one site's completed copies. It is transferred
+// between agents without transferring the other jobs in the same chat.
+type TelegramSiteIndex struct {
+	Chat            string            `json:"chat"`
+	Runs            map[string]*tgRun `json:"runs"`
+	RotationBlocked bool              `json:"rotationBlocked,omitempty"`
+}
+
+func ExportTelegramSite(s model.Storage, dir string) (TelegramSiteIndex, error) {
+	ix := tgIndexFor(s.ID, s.ChatID)
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	if ix.file != "" {
+		if b, err := os.ReadFile(ix.file); err == nil {
+			var disk struct {
+				Chat string            `json:"chat"`
+				Runs map[string]*tgRun `json:"runs"`
+			}
+			if err := json.Unmarshal(b, &disk); err != nil {
+				return TelegramSiteIndex{}, fmt.Errorf("не удалось прочитать индекс Telegram: %w", err)
+			}
+			if disk.Chat != s.ChatID {
+				return TelegramSiteIndex{}, errors.New("канал в сохранённом индексе Telegram не совпадает")
+			}
+		} else if !os.IsNotExist(err) {
+			return TelegramSiteIndex{}, fmt.Errorf("не удалось прочитать индекс Telegram: %w", err)
+		}
+	}
+	out := TelegramSiteIndex{Chat: ix.Chat, Runs: map[string]*tgRun{}, RotationBlocked: ix.Probe.Result == "no"}
+	prefix := Clean(dir) + "/"
+	for d, r := range ix.Runs {
+		if strings.HasPrefix(d, prefix) && r.Done {
+			b, err := json.Marshal(r)
+			if err != nil {
+				return out, err
+			}
+			var copy tgRun
+			if err := json.Unmarshal(b, &copy); err != nil {
+				return out, err
+			}
+			out.Runs[d] = &copy
+		}
+	}
+	return out, nil
+}
+
+func ImportTelegramSite(s model.Storage, dir string, in TelegramSiteIndex) error {
+	if in.Chat != s.ChatID {
+		return errors.New("канал Telegram на серверах не совпадает")
+	}
+	ix := tgIndexFor(s.ID, s.ChatID)
+	ix.mu.Lock()
+	defer ix.mu.Unlock()
+	prefix := Clean(dir) + "/"
+	next := make(map[string]*tgRun, len(ix.Runs)+len(in.Runs))
+	for d, r := range ix.Runs {
+		b, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		var copy tgRun
+		if err := json.Unmarshal(b, &copy); err != nil {
+			return err
+		}
+		next[d] = &copy
+	}
+	for d, r := range in.Runs {
+		if !strings.HasPrefix(d, prefix) || path.Dir(d) != Clean(dir) || r == nil || !r.Done {
+			return errors.New("неверная запись индекса Telegram")
+		}
+		if old := next[d]; old != nil && !reflect.DeepEqual(old, r) {
+			return fmt.Errorf("конфликт копии Telegram: %s", d)
+		}
+		b, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		var copy tgRun
+		if err := json.Unmarshal(b, &copy); err != nil {
+			return err
+		}
+		next[d] = &copy
+	}
+	if ix.file == "" {
+		return errors.New("каталог индекса Telegram не задан")
+	}
+	probe := ix.Probe
+	if in.RotationBlocked {
+		probe.Result = "no"
+	}
+	snapshot := struct {
+		Chat  string            `json:"chat"`
+		Runs  map[string]*tgRun `json:"runs"`
+		TOC   map[string]int    `json:"toc"`
+		Probe tgProbe           `json:"probe"`
+	}{ix.Chat, next, ix.TOC, probe}
+	b, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	tmp := ix.file + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, ix.file); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	ix.Runs = next
+	ix.Probe = probe
+	return nil
 }
 
 var (
@@ -870,7 +984,7 @@ func (t *Telegram) ensureProbe(ctx context.Context) {
 	t.ix.mu.Lock()
 	// Only an agent keeps the index long enough to come back to the probe; a check
 	// from the panel would leave a new one in the chat every time.
-	skip := t.ix.Probe.MessageID != 0 || t.ix.file == ""
+	skip := t.ix.Probe.MessageID != 0 || t.ix.Probe.Result != "" || t.ix.file == ""
 	t.ix.mu.Unlock()
 	if skip {
 		return

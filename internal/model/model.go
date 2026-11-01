@@ -258,18 +258,21 @@ const JobSite = "site"
 const SitesFolder = "sites"
 
 type Job struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Kind        string        `json:"kind,omitempty"` // "" (server job) | JobSite
-	Sources     []Source      `json:"sources"`
-	Schedule    Schedule      `json:"schedule"`
-	Storages    []string      `json:"storages"`
-	Keep        int           `json:"keep"` // simple "keep last N"; used when Retention is empty (jobs from 1.1 and older)
-	Retention   Retention     `json:"retention"`
-	Encrypt     bool          `json:"encrypt"`
-	Compression int           `json:"compression"` // gzip level 1..9
-	Chunk       ChunkSettings `json:"chunk"`
-	Notify      string        `json:"notify"` // errors | always | never
+	ID                string        `json:"id"`
+	Name              string        `json:"name"`
+	Kind              string        `json:"kind,omitempty"`      // "" (server job) | JobSite
+	Migrating         bool          `json:"migrating,omitempty"` // blocks launches during a site transfer
+	MigrationSource   string        `json:"migrationSource,omitempty"`
+	MigrationImported bool          `json:"migrationImported,omitempty"`
+	Sources           []Source      `json:"sources"`
+	Schedule          Schedule      `json:"schedule"`
+	Storages          []string      `json:"storages"`
+	Keep              int           `json:"keep"` // simple "keep last N"; used when Retention is empty (jobs from 1.1 and older)
+	Retention         Retention     `json:"retention"`
+	Encrypt           bool          `json:"encrypt"`
+	Compression       int           `json:"compression"` // gzip level 1..9
+	Chunk             ChunkSettings `json:"chunk"`
+	Notify            string        `json:"notify"` // errors | always | never
 }
 
 // Policy is the effective retention: the calendar scheme or the plain Keep count.
