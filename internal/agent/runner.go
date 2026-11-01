@@ -247,7 +247,7 @@ func (a *Agent) doRun(ctx context.Context, run *model.Run, job model.Job, cfg Co
 			break
 		}
 		streams, cleanupSrc, err := a.planSource(ctx, src, func(lvl, f string, args ...any) {
-			if lvl == "warn" {
+			if lvl == "warn" || lvl == "error" {
 				warnings++
 			}
 			a.logf(run, lvl, f, args...)
