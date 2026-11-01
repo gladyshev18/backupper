@@ -80,7 +80,7 @@ func (a *Agent) planSource(ctx context.Context, src model.Source, logf func(leve
 		return nil, nil, fmt.Errorf("не заданы параметры подключения к хостингу")
 	}
 	cfg := *src.Site
-	sess, err := site.Open(ctx, cfg, a.hostKeys(), logf)
+	sess, err := site.Open(ctx, cfg, a.hostKeys(), logf, a.state.cleanup)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -142,7 +142,7 @@ func (a *Agent) probe(ctx context.Context, src model.Source) model.ProbeResult {
 		if level != "info" {
 			notes = append(notes, fmt.Sprintf(format, args...))
 		}
-	})
+	}, a.state.cleanup)
 	if err != nil {
 		res.Error = err.Error()
 		return res

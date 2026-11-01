@@ -34,6 +34,20 @@ type HostKeys interface {
 	Check(hostport string, key ssh.PublicKey) error
 }
 
+type cleanupDeadlineKey struct{}
+
+func boundedCleanupContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, cleanupDeadlineKey{}, true)
+}
+
+func setCleanupDeadline(ctx context.Context, conn net.Conn) {
+	if _, ok := ctx.Value(cleanupDeadlineKey{}).(bool); ok {
+		if deadline, ok := ctx.Deadline(); ok {
+			_ = conn.SetDeadline(deadline)
+		}
+	}
+}
+
 func defaultPort(s model.SiteSource) int {
 	if s.Port > 0 {
 		return s.Port
@@ -59,7 +73,10 @@ func Dial(ctx context.Context, s model.SiteSource, keys HostKeys) (Remote, error
 	return nil, fmt.Errorf("неизвестный протокол %q", s.Protocol)
 }
 
-type ftpRemote struct{ c *ftp.ServerConn }
+type ftpRemote struct {
+	c       *ftp.ServerConn
+	control net.Conn
+}
 
 func dialFTP(ctx context.Context, addr string, s model.SiteSource) (Remote, error) {
 	r, err := dialFTPOnce(ctx, addr, s, 0)
@@ -78,8 +95,9 @@ func badTicketLifetime(err error) bool {
 
 func dialFTPOnce(ctx context.Context, addr string, s model.SiteSource, maxTLS uint16) (Remote, error) {
 	opts := []ftp.DialOption{ftp.DialWithContext(ctx), ftp.DialWithTimeout(30 * time.Second)}
+	var cfg *tls.Config
 	if s.Protocol == model.ProtoFTPS {
-		cfg := &tls.Config{
+		cfg = &tls.Config{
 			ServerName:         s.Host,
 			InsecureSkipVerify: s.Insecure,
 			MaxVersion:         maxTLS,
@@ -92,6 +110,22 @@ func dialFTPOnce(ctx context.Context, addr string, s model.SiteSource, maxTLS ui
 			opts = append(opts, ftp.DialWithExplicitTLS(cfg))
 		}
 	}
+	var control net.Conn
+	opts = append(opts, ftp.DialWithDialFunc(func(network, address string) (net.Conn, error) {
+		conn, err := (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		setCleanupDeadline(ctx, conn)
+		isControl := control == nil
+		if isControl {
+			control = conn
+		}
+		if cfg != nil && (!isControl || defaultPort(s) == 990) {
+			return tls.Client(conn, cfg), nil
+		}
+		return conn, nil
+	}))
 	c, err := ftp.Dial(addr, opts...)
 	if err != nil {
 		return nil, friendlyTLS(fmt.Errorf("подключение к %s: %w", addr, err))
@@ -108,7 +142,7 @@ func dialFTPOnce(ctx context.Context, addr string, s model.SiteSource, maxTLS ui
 		}
 		return nil, fmt.Errorf("FTP не принял логин или пароль: %w", err)
 	}
-	return &ftpRemote{c: c}, nil
+	return &ftpRemote{c: c, control: control}, nil
 }
 
 func friendlyTLS(err error) error {
@@ -149,6 +183,7 @@ func matchingPTR(ip string, cert *x509.Certificate) string {
 func (r *ftpRemote) Upload(p string, data []byte) error { return r.c.Stor(p, bytes.NewReader(data)) }
 func (r *ftpRemote) Remove(p string) error              { return r.c.Delete(p) }
 func (r *ftpRemote) Close() error                       { return r.c.Quit() }
+func (r *ftpRemote) abort() error                       { return r.control.Close() }
 
 func (r *ftpRemote) List(dir string) ([]string, error) {
 	entries, err := r.c.List(dir)
@@ -168,6 +203,8 @@ type sftpRemote struct {
 	ssh *ssh.Client
 	c   *sftp.Client
 }
+
+func (r *sftpRemote) abort() error { return r.ssh.Close() }
 
 func dialSFTP(ctx context.Context, addr string, s model.SiteSource, keys HostKeys) (Remote, error) {
 	pass := s.Password
@@ -197,6 +234,7 @@ func dialSFTP(ctx context.Context, addr string, s model.SiteSource, keys HostKey
 	if err != nil {
 		return nil, fmt.Errorf("подключение к %s: %w", addr, err)
 	}
+	setCleanupDeadline(ctx, nc)
 	cc, chans, reqs, err := ssh.NewClientConn(nc, addr, cfg)
 	if err != nil {
 		nc.Close()

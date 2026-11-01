@@ -49,10 +49,11 @@ var staleRe = regexp.MustCompile(`^backupper_[0-9a-f]{16}(\.list)?\.php$`)
 type Logf func(level, format string, args ...any)
 
 type Session struct {
-	src    model.SiteSource
-	keys   HostKeys
-	remote Remote
-	logf   Logf
+	src     model.SiteSource
+	keys    HostKeys
+	remote  Remote
+	cleanup *CleanupQueue
+	logf    Logf
 
 	name   string
 	secret string
@@ -80,6 +81,13 @@ type meta struct {
 
 func (s *Session) scriptPath() string { return path.Join(s.src.Root, s.name+".php") }
 func (s *Session) listPath() string   { return path.Join(s.src.Root, s.name+".list.php") }
+
+func (s *Session) rootOrDot() string {
+	if s.src.Root == "" {
+		return "/"
+	}
+	return s.src.Root
+}
 
 func randHex(n int) string {
 	b := make([]byte, n)
@@ -112,7 +120,7 @@ func validate(src model.SiteSource) error {
 }
 
 // Open uploads the script and checks the hosting. Close must be called in any case.
-func Open(ctx context.Context, src model.SiteSource, keys HostKeys, logf Logf) (*Session, error) {
+func Open(ctx context.Context, src model.SiteSource, keys HostKeys, logf Logf, queues ...*CleanupQueue) (*Session, error) {
 	if err := validate(src); err != nil {
 		return nil, err
 	}
@@ -123,6 +131,9 @@ func Open(ctx context.Context, src model.SiteSource, keys HostKeys, logf Logf) (
 	s := &Session{src: src, keys: keys, logf: logf, sec: 20, maxBytes: 8 << 20}
 	s.secret = randHex(32)
 	s.name = "backupper_" + randHex(8)
+	if len(queues) > 0 {
+		s.cleanup = queues[0]
+	}
 	s.macKey = keyFrom("mac", s.secret)
 	s.encKey = keyFrom("enc", s.secret)
 	s.url = strings.TrimRight(strings.TrimSpace(src.URL), "/") + "/" + s.name + ".php"
@@ -145,9 +156,17 @@ func Open(ctx context.Context, src model.SiteSource, keys HostKeys, logf Logf) (
 		return nil, err
 	}
 	s.remote = r
-	s.removeStale()
+	if s.cleanup != nil {
+		if err := s.cleanup.register(src, s.name); err != nil {
+			abortRemote(s.remote)
+			return nil, fmt.Errorf("не удалось сохранить очередь очистки: %w", err)
+		}
+	}
 	if err := s.remote.Upload(s.scriptPath(), Script(s.secret)); err != nil {
-		s.remote.Close()
+		abortRemote(s.remote)
+		if s.cleanup != nil {
+			_ = s.cleanup.release(s.name, false)
+		}
 		return nil, fmt.Errorf("не удалось загрузить скрипт в %s: %w", s.scriptPath(), err)
 	}
 	logf("info", "Скрипт загружен на хостинг: %s", s.scriptPath())
@@ -168,27 +187,6 @@ func Open(ctx context.Context, src model.SiteSource, keys HostKeys, logf Logf) (
 	s.Info = *m.Info
 	s.tune()
 	return s, nil
-}
-
-func (s *Session) removeStale() {
-	names, err := s.remote.List(s.rootOrDot())
-	if err != nil {
-		return
-	}
-	for _, n := range names {
-		if staleRe.MatchString(n) {
-			if err := s.remote.Remove(path.Join(s.src.Root, n)); err == nil {
-				s.logf("warn", "Удалён забытый скрипт прошлого запуска: %s", n)
-			}
-		}
-	}
-}
-
-func (s *Session) rootOrDot() string {
-	if s.src.Root == "" {
-		return "/"
-	}
-	return s.src.Root
 }
 
 // checkClock learns the hosting clock from the Date header: requests carry a timestamp.
@@ -483,29 +481,36 @@ func (s *Session) Close() {
 	_, _ = s.call(ctx, "cleanup", map[string]any{}, &m)
 	cancel()
 
-	remove := func() error {
-		err := s.remote.Remove(s.scriptPath())
-		_ = s.remote.Remove(s.listPath())
-		return err
+	// The original FTP connection may have timed out while the backup streamed.
+	// Close it without waiting for QUIT, then use a bounded fresh connection.
+	abortRemote(s.remote)
+	rctx, rcancel := context.WithTimeout(context.Background(), time.Minute)
+	r, err := Dial(boundedCleanupContext(rctx), s.src, s.keys)
+	if err == nil {
+		err = removeSessionFiles(r, s.src.Root, s.name)
+		abortRemote(r)
 	}
-	err := remove()
+	rcancel()
 	if err != nil {
-		// The control connection often times out during a long backup: reconnect once.
-		s.remote.Close()
-		rctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-		r, derr := Dial(rctx, s.src, s.keys)
-		cancel()
-		if derr == nil {
-			s.remote = r
-			err = remove()
+		if s.cleanup != nil {
+			s.logf("error", "НЕ удалось удалить временные файлы %s с хостинга: %v. Агент повторит очистку в фоне", s.scriptPath(), err)
 		} else {
-			err = derr
+			s.logf("error", "НЕ удалось удалить временные файлы %s с хостинга: %v", s.scriptPath(), err)
 		}
-	}
-	if err != nil {
-		s.logf("error", "НЕ удалось удалить скрипт %s с хостинга: %v. Он защищён подписью, но удалите его вручную (или он удалится при следующем запуске)", s.scriptPath(), err)
 	} else {
 		s.logf("info", "Скрипт удалён с хостинга")
 	}
-	s.remote.Close()
+	if s.cleanup != nil {
+		if qerr := s.cleanup.release(s.name, err == nil); qerr != nil {
+			s.logf("error", "Не удалось сохранить состояние очистки: %v", qerr)
+		}
+	}
+}
+
+func abortRemote(r Remote) {
+	if a, ok := r.(interface{ abort() error }); ok {
+		_ = a.abort()
+	} else {
+		_ = r.Close()
+	}
 }

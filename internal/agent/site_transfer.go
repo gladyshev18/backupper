@@ -32,6 +32,16 @@ func (a *Agent) hPauseSite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	jobBefore, ok := a.state.Job(id)
+	if ok && a.state.cleanup != nil {
+		for _, source := range jobBefore.Sources {
+			if source.Site != nil && a.state.cleanup.HasPending(*source.Site) {
+				a.mu.Unlock()
+				httpErr(w, 409, errors.New("дождитесь удаления временных файлов сайта на хостинге"))
+				return
+			}
+		}
+	}
 	var job model.Job
 	err := a.state.update(func(c *Config) error {
 		for i := range c.Jobs {

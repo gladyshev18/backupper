@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backupper/internal/model"
+	"backupper/internal/site"
 	"backupper/internal/storage"
 )
 
@@ -38,11 +39,12 @@ func (p Paths) history() string { return filepath.Join(p.DataDir, "history.json"
 func (p Paths) stats() string   { return filepath.Join(p.DataDir, "stats.json") }
 
 type State struct {
-	paths Paths
-	mu    sync.Mutex
-	cfg   Config
-	runs  []*model.Run // newest last
-	stats map[string]StorageStats
+	paths   Paths
+	mu      sync.Mutex
+	cfg     Config
+	runs    []*model.Run // newest last
+	stats   map[string]StorageStats
+	cleanup *site.CleanupQueue
 }
 
 const maxRuns = 300
@@ -89,6 +91,10 @@ func OpenState(p Paths) (*State, error) {
 		return nil, fmt.Errorf("в %s не задан token — выполните install", p.Config)
 	}
 	s := &State{paths: p, cfg: cfg, stats: map[string]StorageStats{}}
+	s.cleanup, err = site.OpenCleanupQueue(p.DataDir)
+	if err != nil {
+		return nil, err
+	}
 	storage.SetDataDir(p.DataDir) // Telegram storages keep their message index here
 	_ = readJSON(p.history(), &s.runs)
 	_ = readJSON(p.stats(), &s.stats)

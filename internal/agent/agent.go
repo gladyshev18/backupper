@@ -49,6 +49,9 @@ func (a *Agent) Start(ctx context.Context) {
 	a.Reschedule()
 	a.cron.Start()
 	go a.worker(ctx)
+	if a.state.cleanup != nil {
+		go a.state.cleanup.Run(ctx, a.hostKeys())
+	}
 }
 
 // Reschedule rebuilds cron entries from the current job list.
