@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Bell, Eye, EyeOff, KeyRound, Languages, Palette, Send, Wand2 } from 'lucide-react'
+import { Bell, Eye, EyeOff, FolderOpen, KeyRound, Languages, Palette, Send, Wand2 } from 'lucide-react'
 import { useApp } from '../App'
 import { api } from '../api'
 import type { Settings } from '../types'
@@ -38,9 +38,23 @@ export default function SettingsPage() {
       <div className="page-head">
         <div>
           <h1>{t('Настройки')}</h1>
-          <div className="desc">{t('Общие для всех серверов: передаются агентам при подключении')}</div>
+          <div className="desc">{t('Параметры панели и общие настройки серверов')}</div>
         </div>
         <div className="actions"><Button variant="primary" loading={busy === 'save'} onClick={save}>{t('Сохранить')}</Button></div>
+      </div>
+
+      <div className="editor-section">
+        <h3><FolderOpen size={17} /> {t('Локальные копии')}</h3>
+        <div className="small muted" style={{ marginBottom: 12 }}>{t('Папка на этом компьютере для сохранения копий из истории. На серверы не передаётся.')}</div>
+        <Field label={t('Папка для сохранения')} hint={t('Каждая копия сохраняется в отдельный подкаталог с датой запуска.')}>
+          <div className="input-group">
+            <input className="input mono" value={s.downloadDir} onChange={e => set({ downloadDir: e.target.value })} placeholder="D:\Backups" />
+            <Button icon={<FolderOpen size={16} />} loading={busy === 'downloadDir'} onClick={() => run('downloadDir', async () => {
+              const dir = await api.pickDownloadDir()
+              if (dir) set({ downloadDir: dir })
+            })}>{t('Выбрать папку')}</Button>
+          </div>
+        </Field>
       </div>
 
       <div className="editor-section">

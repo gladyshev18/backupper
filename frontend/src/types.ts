@@ -152,6 +152,7 @@ export interface Settings {
   theme: 'system' | 'light' | 'dark'
   yandexClientId: string
   language: 'ru' | 'en' | ''
+  downloadDir: string
 }
 
 export interface Server {

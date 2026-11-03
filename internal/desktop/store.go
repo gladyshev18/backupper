@@ -30,6 +30,7 @@ type Settings struct {
 	Theme              string         `json:"theme"` // system | light | dark
 	YandexClientID     string         `json:"yandexClientId"`
 	Language           string         `json:"language"` // ru | en; empty = by Windows language
+	DownloadDir        string         `json:"downloadDir"`
 }
 
 type Config struct {

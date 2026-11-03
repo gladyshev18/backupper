@@ -35,6 +35,8 @@ export const api = {
   deleteBackup: (sid: string, stid: string, dir: string): Promise<void> => g.DeleteBackup(sid, stid, dir),
   download: (sid: string, stid: string, dir: string, file: string, decrypt: boolean, size: number): Promise<string> =>
     g.DownloadBackup(sid, stid, dir, file, decrypt, size),
+  saveBackupLocal: (sid: string, rid: string, stid: string, decrypt: boolean): Promise<string> =>
+    g.SaveBackupLocal(sid, rid, stid, decrypt),
   reveal: (path: string): Promise<void> => g.RevealFile(path),
 
   saveStorage: (s: Storage): Promise<string> => g.SaveStorage(s),
@@ -45,6 +47,7 @@ export const api = {
   telegramChats: (s: Storage): Promise<TelegramChat[]> => g.TelegramChats(s),
 
   saveSettings: (s: Settings): Promise<Record<string, string>> => g.SaveSettings(s),
+  pickDownloadDir: (): Promise<string> => g.PickDownloadDir(),
   testTelegram: (t: Settings['telegram']): Promise<void> => g.TestTelegram(t),
   openURL: (u: string): Promise<void> => g.OpenURL(u),
   nextRuns: (s: Schedule, tzOffset: number, count: number): Promise<string[]> => g.NextRuns(s, tzOffset, count),

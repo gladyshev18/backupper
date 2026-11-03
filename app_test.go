@@ -25,3 +25,16 @@ func TestRetentionPreview(t *testing.T) {
 		t.Fatalf("manual job: %+v", p)
 	}
 }
+
+func TestSafeLocalName(t *testing.T) {
+	for _, name := range []string{"db.sql.gz", "site.tar.gz.age", "2026-11-03_03-00-00"} {
+		if !safeLocalName(name) {
+			t.Errorf("safe name %q rejected", name)
+		}
+	}
+	for _, name := range []string{"", ".", "..", "../db.sql.gz", `..\\db.sql.gz`, "dir/db.sql.gz", `dir\\db.sql.gz`} {
+		if safeLocalName(name) {
+			t.Errorf("unsafe name %q accepted", name)
+		}
+	}
+}

@@ -89,6 +89,7 @@ export namespace desktop {
 	    theme: string;
 	    yandexClientId: string;
 	    language: string;
+	    downloadDir: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -101,6 +102,7 @@ export namespace desktop {
 	        this.theme = source["theme"];
 	        this.yandexClientId = source["yandexClientId"];
 	        this.language = source["language"];
+	        this.downloadDir = source["downloadDir"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

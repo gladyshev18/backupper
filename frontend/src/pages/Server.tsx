@@ -238,6 +238,8 @@ function JobsTab({ id, st, jobs, onEdit, refresh }: { id: string; st: ServerStat
 
 /** Runs of the server's jobs; `fixed` shows only the first job (a site page). */
 export function HistoryTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; fixed?: boolean }) {
+  const { state } = useApp()
+  const { run, busy, toast } = useUI()
   const [jobId, setJobId] = useState(fixed ? jobs[0].id : '')
   const [runs, setRuns] = useState<Run[] | null>(null)
   const [error, setError] = useState('')
@@ -246,6 +248,11 @@ export function HistoryTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; f
     api.runs(id, jobId, 100).then(r => { setRuns(r || []); setError('') }).catch(e => { setError(errText(e)); setRuns(v => v || []) })
   }, 10000, [id, jobId])
   const show = async (r: Run) => setOpen(await api.run(id, r.id))
+  const canSave = (r: Run) => (r.status === 'success' || r.status === 'warning') && !!r.remoteDir && r.storages?.length > 0 && r.files?.some(f => !f.error && f.parts?.length > 0)
+  const saveLocal = (r: Run) => run('local' + r.id, async () => {
+    const dir = await api.saveBackupLocal(id, r.id, r.storages[0], true)
+    if (dir) toast('success', t('Сохранено: {path}', { path: dir }))
+  })
   return (
     <>
       {!fixed && <div className="row" style={{ marginBottom: 12 }}>
@@ -258,7 +265,7 @@ export function HistoryTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; f
       <div className="card">
         {!runs ? <div className="card-pad"><Bar value={0} indeterminate /></div> : runs.length === 0 ? <div className="empty small">{error ? t('Не удалось загрузить историю') : t('Запусков пока не было')}</div> : (
           <table className="table">
-            <thead><tr><th>{t('Задача')}</th><th>{t('Запуск')}</th><th>{t('Начало')}</th><th>{t('Длительность')}</th><th>{t('Данные → архив')}</th><th>{t('Статус')}</th></tr></thead>
+            <thead><tr><th>{t('Задача')}</th><th>{t('Запуск')}</th><th>{t('Начало')}</th><th>{t('Длительность')}</th><th>{t('Данные → архив')}</th><th>{t('Статус')}</th><th /></tr></thead>
             <tbody>
               {runs.map(r => (
                 <tr key={r.id} className="click" onClick={() => show(r)}>
@@ -268,6 +275,12 @@ export function HistoryTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; f
                   <td className="muted">{duration(r.startedAt, r.finishedAt)}</td>
                   <td className="muted">{bytes(r.rawBytes)} → {bytes(r.bytes)}</td>
                   <td><StatusBadge status={r.status} /></td>
+                  <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                    <Button size="sm" icon={<Download size={13} />} loading={busy === 'local' + r.id}
+                      disabled={!canSave(r) || !state.settings.downloadDir}
+                      title={!state.settings.downloadDir ? t('Сначала укажите локальную папку в настройках') : t('Сохранить локально')}
+                      onClick={() => saveLocal(r)}>{t('Сохранить локально')}</Button>
+                  </td>
                 </tr>
               ))}
             </tbody>

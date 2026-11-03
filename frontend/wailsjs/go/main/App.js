@@ -74,6 +74,10 @@ export function Overview() {
   return window['go']['main']['App']['Overview']();
 }
 
+export function PickDownloadDir() {
+  return window['go']['main']['App']['PickDownloadDir']();
+}
+
 export function PickKeyFile() {
   return window['go']['main']['App']['PickKeyFile']();
 }
@@ -112,6 +116,10 @@ export function RunJob(arg1, arg2) {
 
 export function Runs(arg1, arg2, arg3) {
   return window['go']['main']['App']['Runs'](arg1, arg2, arg3);
+}
+
+export function SaveBackupLocal(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['SaveBackupLocal'](arg1, arg2, arg3, arg4);
 }
 
 export function SaveJob(arg1, arg2) {

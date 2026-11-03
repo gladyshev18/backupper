@@ -416,7 +416,14 @@ export const en: Record<string, string> = {
   // settings
   'Не удалось отправить на серверы: {list}. Отправится при следующем подключении.': 'Could not push to servers: {list}. Will be sent on the next connection.',
   'Настройки сохранены и отправлены на серверы': 'Settings saved and pushed to servers',
-  'Общие для всех серверов: передаются агентам при подключении': 'Shared by all servers: pushed to agents on connection',
+  'Параметры панели и общие настройки серверов': 'Panel options and shared server settings',
+  'Локальные копии': 'Local backups',
+  'Папка на этом компьютере для сохранения копий из истории. На серверы не передаётся.': 'A folder on this PC for saving backups from the history. It is not sent to servers.',
+  'Папка для сохранения': 'Destination folder',
+  'Каждая копия сохраняется в отдельный подкаталог с датой запуска.': 'Each backup is saved in a separate subfolder named after its run date.',
+  'Выбрать папку': 'Choose folder',
+  'Сохранить локально': 'Save locally',
+  'Сначала укажите локальную папку в настройках': 'Choose a local folder in Settings first',
   'Пароль шифрования архивов': 'Archive encryption password',
   'Используется задачами с включённым шифрованием (формат age, совместим с утилитой age -d). Хранится на этом ПК (зашифрован учётной записью Windows) и на серверах в /etc/backupper (доступ только root).':
     'Used by jobs with encryption on (age format, works with the age -d tool). Stored on this PC (encrypted with your Windows account) and on servers in /etc/backupper (root only).',

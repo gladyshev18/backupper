@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -463,6 +465,41 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
+func (a *App) downloadBackupFile(serverID, storageID, dir, file, dest string, decrypt bool, size int64) error {
+	q := url.Values{"storage": {storageID}, "dir": {dir}, "file": {file}}
+	if decrypt {
+		q.Set("decrypt", "1")
+	}
+	resp, err := a.mgr.Stream(a.ctx, serverID, "/api/download?"+q.Encode())
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	tmp := dest + ".part"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	pw := &progressWriter{a: a, key: dir + "/" + file, total: size}
+	_, copyErr := io.Copy(io.MultiWriter(f, pw), resp.Body)
+	closeErr := f.Close()
+	if copyErr != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("скачивание прервано: %w", copyErr)
+	}
+	if closeErr != nil {
+		os.Remove(tmp)
+		return closeErr
+	}
+	os.Remove(dest)
+	if err := os.Rename(tmp, dest); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	runtime.EventsEmit(a.ctx, "download", map[string]any{"key": pw.key, "done": pw.done, "total": pw.done, "finished": true})
+	return nil
+}
+
 // DownloadBackup asks where to save, then streams the file glued from its parts.
 func (a *App) DownloadBackup(serverID, storageID, dir, file string, decrypt bool, size int64) (string, error) {
 	name := file
@@ -473,32 +510,78 @@ func (a *App) DownloadBackup(serverID, storageID, dir, file string, decrypt bool
 	if err != nil || dest == "" {
 		return "", err
 	}
-	q := url.Values{"storage": {storageID}, "dir": {dir}, "file": {file}}
-	if decrypt {
-		q.Set("decrypt", "1")
-	}
-	resp, err := a.mgr.Stream(a.ctx, serverID, "/api/download?"+q.Encode())
-	if err != nil {
+	if err := a.downloadBackupFile(serverID, storageID, dir, file, dest, decrypt, size); err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	f, err := os.Create(dest + ".part")
-	if err != nil {
-		return "", err
-	}
-	pw := &progressWriter{a: a, key: dir + "/" + file, total: size}
-	_, err = io.Copy(io.MultiWriter(f, pw), resp.Body)
-	f.Close()
-	if err != nil {
-		os.Remove(dest + ".part")
-		return "", fmt.Errorf("скачивание прервано: %w", err)
-	}
-	os.Remove(dest)
-	if err := os.Rename(dest+".part", dest); err != nil {
-		return "", err
-	}
-	runtime.EventsEmit(a.ctx, "download", map[string]any{"key": pw.key, "done": pw.done, "total": pw.done, "finished": true})
 	return dest, nil
+}
+
+func (a *App) PickDownloadDir() (string, error) {
+	dir := a.store.Get().Settings.DownloadDir
+	if info, err := os.Stat(dir); dir == "" || err != nil || !info.IsDir() {
+		dir, _ = os.UserHomeDir()
+	}
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Папка для локальных копий", DefaultDirectory: dir})
+}
+
+func safeLocalName(name string) bool {
+	return name != "" && name != "." && name != ".." && path.Base(name) == name && filepath.Base(name) == name
+}
+
+func (a *App) SaveBackupLocal(serverID, runID, storageID string, decrypt bool) (string, error) {
+	root := strings.TrimSpace(a.store.Get().Settings.DownloadDir)
+	if root == "" {
+		return "", errors.New("сначала укажите локальную папку в настройках")
+	}
+	run, err := a.Run(serverID, runID)
+	if err != nil {
+		return "", err
+	}
+	if run.Status != model.RunSuccess && run.Status != model.RunWarning {
+		return "", errors.New("эта копия не завершена успешно")
+	}
+	validStorage := false
+	for _, id := range run.Storages {
+		validStorage = validStorage || id == storageID
+	}
+	if !validStorage {
+		return "", errors.New("облако этой копии не найдено")
+	}
+	dirName := path.Base(run.RemoteDir)
+	if run.RemoteDir == "" || !safeLocalName(dirName) {
+		return "", errors.New("неверный путь копии")
+	}
+	files := []model.RunFile{}
+	for _, f := range run.Files {
+		if f.Error != "" || len(f.Parts) == 0 {
+			continue
+		}
+		name := f.Name
+		if decrypt && f.Encrypted {
+			name = strings.TrimSuffix(name, ".age")
+		}
+		if !safeLocalName(name) {
+			return "", fmt.Errorf("неверное имя файла в копии: %q", f.Name)
+		}
+		files = append(files, f)
+	}
+	if len(files) == 0 {
+		return "", errors.New("в этой копии нет файлов для сохранения")
+	}
+	destDir := filepath.Join(root, agent.Slug(run.JobName), dirName)
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		name := f.Name
+		if decrypt && f.Encrypted {
+			name = strings.TrimSuffix(name, ".age")
+		}
+		if err := a.downloadBackupFile(serverID, storageID, run.RemoteDir, f.Name, filepath.Join(destDir, name), decrypt && f.Encrypted, f.Size); err != nil {
+			return "", fmt.Errorf("%s: %w", f.Name, err)
+		}
+	}
+	return destDir, nil
 }
 
 func (a *App) RevealFile(path string) {
@@ -680,6 +763,7 @@ func (a *App) TelegramChats(s model.Storage) ([]storage.TelegramChat, error) {
 // ---- settings ----
 
 func (a *App) SaveSettings(s desktop.Settings) (map[string]string, error) {
+	s.DownloadDir = strings.TrimSpace(s.DownloadDir)
 	err := a.store.Update(func(c *desktop.Config) error {
 		c.Settings = s
 		return nil

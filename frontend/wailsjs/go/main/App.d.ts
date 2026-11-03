@@ -42,6 +42,8 @@ export function OpenURL(arg1:string):Promise<void>;
 
 export function Overview():Promise<Array<main.ServerStatus>>;
 
+export function PickDownloadDir():Promise<string>;
+
 export function PickKeyFile():Promise<string>;
 
 export function Plan(arg1:string,arg2:model.Job,arg3:string):Promise<model.ChunkPlan>;
@@ -61,6 +63,8 @@ export function Run(arg1:string,arg2:string):Promise<model.Run>;
 export function RunJob(arg1:string,arg2:string):Promise<model.Run>;
 
 export function Runs(arg1:string,arg2:string,arg3:number):Promise<Array<model.Run>>;
+
+export function SaveBackupLocal(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<string>;
 
 export function SaveJob(arg1:string,arg2:model.Job):Promise<model.Job>;
 
