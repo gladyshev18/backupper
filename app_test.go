@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"backupper/internal/model"
@@ -36,5 +39,23 @@ func TestSafeLocalName(t *testing.T) {
 		if safeLocalName(name) {
 			t.Errorf("unsafe name %q accepted", name)
 		}
+	}
+}
+
+func TestAppendDownloadLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", "downloads.log")
+	if err := appendDownloadLog(path, "первое событие"); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendDownloadLog(path, "второе событие"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	if !strings.Contains(text, "первое событие") || !strings.Contains(text, "второе событие") {
+		t.Fatalf("unexpected log: %s", text)
 	}
 }

@@ -510,6 +510,7 @@ export namespace model {
 	    jobId: string;
 	    jobName: string;
 	    trigger: string;
+	    retry?: number;
 	    status: string;
 	    // Go type: time
 	    queuedAt: any;
@@ -540,6 +541,7 @@ export namespace model {
 	        this.jobId = source["jobId"];
 	        this.jobName = source["jobName"];
 	        this.trigger = source["trigger"];
+	        this.retry = source["retry"];
 	        this.status = source["status"];
 	        this.queuedAt = this.convertValues(source["queuedAt"], null);
 	        this.startedAt = this.convertValues(source["startedAt"], null);

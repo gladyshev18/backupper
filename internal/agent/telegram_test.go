@@ -86,6 +86,26 @@ func TestTelegramUploadDownload(t *testing.T) {
 		t.Fatalf("backups: %+v", list)
 	}
 
+	var byParts []byte
+	for _, p := range rf.Parts {
+		resp = get("/api/downloadpart?storage=tg&file=db.sql.gz.age&dir=" + run.RemoteDir + "&part=" + p.Name)
+		b, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if int64(len(b)) != p.Size {
+			t.Fatalf("part %s: %d bytes, want %d", p.Name, len(b), p.Size)
+		}
+		byParts = append(byParts, b...)
+	}
+	resp = get("/api/download?storage=tg&file=db.sql.gz.age&dir=" + run.RemoteDir)
+	whole, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || !bytes.Equal(byParts, whole) {
+		t.Fatalf("parts differ from the whole encrypted file: %v", err)
+	}
+
 	resp = get("/api/download?storage=tg&decrypt=1&file=db.sql.gz.age&dir=" + run.RemoteDir)
 	defer resp.Body.Close()
 	gz, err := gzip.NewReader(resp.Body)

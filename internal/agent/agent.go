@@ -54,6 +54,13 @@ func (a *Agent) Start(ctx context.Context) {
 	}
 }
 
+const (
+	scheduledTrigger = "по расписанию"
+	retryTrigger     = "автоповтор"
+)
+
+var scheduledRetryDelays = [...]time.Duration{time.Minute, 5 * time.Minute}
+
 // Reschedule rebuilds cron entries from the current job list.
 func (a *Agent) Reschedule() {
 	a.mu.Lock()
@@ -71,7 +78,7 @@ func (a *Agent) Reschedule() {
 			continue
 		}
 		jobID := j.ID
-		id, err := a.cron.AddFunc(expr, func() { _, _ = a.Enqueue(jobID, "по расписанию") })
+		id, err := a.cron.AddFunc(expr, func() { _, _ = a.Enqueue(jobID, scheduledTrigger) })
 		if err == nil {
 			a.entries[jobID] = id
 		}
@@ -92,6 +99,10 @@ func (a *Agent) NextRun(jobID string) *time.Time {
 
 // Enqueue adds a run; one job never has two runs waiting at once.
 func (a *Agent) Enqueue(jobID, trigger string) (*model.Run, error) {
+	return a.enqueue(jobID, trigger, 0)
+}
+
+func (a *Agent) enqueue(jobID, trigger string, retry int) (*model.Run, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	job, ok := a.state.Job(jobID)
@@ -109,7 +120,7 @@ func (a *Agent) Enqueue(jobID, trigger string) (*model.Run, error) {
 			return nil, fmt.Errorf("задача уже в очереди")
 		}
 	}
-	run := &model.Run{ID: NewID(), JobID: job.ID, JobName: job.Name, Trigger: trigger, Status: model.RunQueued, QueuedAt: time.Now()}
+	run := &model.Run{ID: NewID(), JobID: job.ID, JobName: job.Name, Trigger: trigger, Retry: retry, Status: model.RunQueued, QueuedAt: time.Now()}
 	a.queue = append(a.queue, run)
 	a.state.AddRun(run)
 	select {
@@ -157,7 +168,42 @@ func (a *Agent) worker(ctx context.Context) {
 		a.mu.Lock()
 		a.active, a.cancel = nil, nil
 		a.mu.Unlock()
+		a.scheduleRetry(ctx, run)
 	}
+}
+
+func nextScheduledRetry(run *model.Run) (int, time.Duration, bool) {
+	if run.Status != model.RunFailed || (run.Trigger != scheduledTrigger && run.Trigger != retryTrigger) {
+		return 0, 0, false
+	}
+	attempt := run.Retry + 1
+	if attempt > len(scheduledRetryDelays) {
+		return 0, 0, false
+	}
+	return attempt, scheduledRetryDelays[attempt-1], true
+}
+
+func (a *Agent) scheduleRetry(ctx context.Context, run *model.Run) {
+	attempt, delay, ok := nextScheduledRetry(run)
+	if !ok {
+		return
+	}
+	a.logf(run, "info", "Запланирован автоматический повтор %d из %d через %s", attempt, len(scheduledRetryDelays), ruDuration(delay))
+	a.state.SaveHistory()
+	time.AfterFunc(delay, func() {
+		if ctx.Err() != nil {
+			return
+		}
+		if job, ok := a.state.Job(run.JobID); ok && !job.Schedule.Enabled {
+			a.logf(run, "info", "Автоматический повтор %d отменён: расписание выключено", attempt)
+			a.state.SaveHistory()
+			return
+		}
+		if _, err := a.enqueue(run.JobID, retryTrigger, attempt); err != nil {
+			a.logf(run, "warn", "Автоматический повтор %d не поставлен в очередь: %v", attempt, err)
+			a.state.SaveHistory()
+		}
+	})
 }
 
 // Cancel stops a running run or removes a queued one.

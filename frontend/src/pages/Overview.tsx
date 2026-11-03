@@ -159,7 +159,7 @@ export default function Overview() {
               {recent.slice(0, 12).map(r => (
                 <tr key={r.id} className="click" onClick={() => go(statuses[r.sid]?.info?.jobs.some(j => j.id === r.jobId && j.kind === 'site')
                   ? { page: 'site', server: r.sid, job: r.jobId } : { page: 'server', id: r.sid })}>
-                  <td style={{ fontWeight: 550 }}>{r.jobName}<div className="small faint">{t(r.trigger)}</div></td>
+                  <td style={{ fontWeight: 550 }}>{r.jobName}<div className="small faint">{r.retry ? t('Автоповтор {n}', { n: r.retry }) : t(r.trigger)}</div></td>
                   <td className="muted">{r.server}</td>
                   <td className="muted">{dateTime(r.startedAt)}</td>
                   <td className="muted">{duration(r.startedAt, r.finishedAt)}</td>

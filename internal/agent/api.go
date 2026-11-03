@@ -58,6 +58,7 @@ func (a *Agent) Handler() http.Handler {
 	mux.HandleFunc("GET /api/backups", a.hBackups)
 	mux.HandleFunc("DELETE /api/backups", a.hDeleteBackup)
 	mux.HandleFunc("GET /api/download", a.hDownload)
+	mux.HandleFunc("GET /api/downloadpart", a.hDownloadPart)
 	mux.HandleFunc("POST /api/probe", a.hProbe)
 	mux.HandleFunc("POST /api/telegram/test", a.hTelegram)
 
@@ -458,6 +459,52 @@ func (a *Agent) hDownload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
 	_, _ = io.Copy(w, body)
+}
+
+// hDownloadPart streams one encrypted part so the panel can retry it independently.
+func (a *Agent) hDownloadPart(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	sc, st, err := a.storageFor(q.Get("storage"))
+	if err != nil {
+		httpErr(w, 400, err)
+		return
+	}
+	rel, err := safeRel(q.Get("dir"))
+	if err != nil {
+		httpErr(w, 400, err)
+		return
+	}
+	dir := storage.Clean(path.Join(sc.Root, rel))
+	man, err := readManifest(r.Context(), st, dir)
+	if err != nil {
+		httpErr(w, 404, fmt.Errorf("manifest.json: %w", err))
+		return
+	}
+	var part *model.Part
+	for i := range man.Files {
+		if man.Files[i].Name != q.Get("file") {
+			continue
+		}
+		for j := range man.Files[i].Parts {
+			if man.Files[i].Parts[j].Name == q.Get("part") {
+				part = &man.Files[i].Parts[j]
+			}
+		}
+	}
+	if part == nil {
+		httpErr(w, 404, errors.New("часть файла не найдена в копии"))
+		return
+	}
+	rc, err := st.Get(r.Context(), path.Join(dir, part.Name))
+	if err != nil {
+		httpErr(w, 502, err)
+		return
+	}
+	defer rc.Close()
+	w.Header().Set("Content-Length", strconv.FormatInt(part.Size, 10))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", part.Name))
+	_, _ = io.Copy(w, rc)
 }
 
 func (a *Agent) hProbe(w http.ResponseWriter, r *http.Request) {

@@ -24,7 +24,7 @@ The panel owns global settings (clouds, encryption password, Telegram, language)
 |---|---|
 | `main.go`, `app.go` | Wails entry; `App` methods are bound to JS (`frontend/wailsjs` is generated) |
 | `internal/desktop` | panel config (`%APPDATA%\Backupper\panel.dat`, DPAPI-encrypted), SSH dial/keys/host-key pinning, tunnel `Manager`, agent install/adopt/uninstall, `tgserver.go` (check + install of the Telegram Bot API server) |
-| `internal/agent` | agent: `state.go` (config, history, speed stats), `agent.go` (cron + single worker queue), `runner.go` (run, manifest, rotation), `pipeline.go` (part uploader, retries, adaptive shrink/split), `sources.go` (mysqldump/pg_dump/tar commands), `site_source.go` (hosting sources, SFTP known_hosts), `api.go`, `install.go` (systemd), `notify.go` (Telegram) |
+| `internal/agent` | agent: `state.go` (config, history, speed stats), `agent.go` (cron + single worker queue + two retries of failed scheduled runs), `runner.go` (run, manifest, rotation), `pipeline.go` (part uploader, retries, adaptive shrink/split), `sources.go` (mysqldump/pg_dump/tar commands), `site_source.go` (hosting sources, SFTP known_hosts), `api.go`, `install.go` (systemd), `notify.go` (Telegram) |
 | `internal/site` | `script.php` (embedded, PHP 7.1+), `site.go` (session, HMAC requests, AES-GCM responses, retries), `remote.go` (FTP/FTPS/SFTP) |
 | `internal/cms` | CMS presets (markers + disposable folders): site search under server folders → tar excludes; the same list goes to `script.php` |
 | `internal/chunk` | part-size planner + explanations (RU, EN in `messages_en.go`) |
@@ -73,7 +73,8 @@ object returning sample data, then re-import `/src/main.tsx`. Never test against
 `GET /api/info` · `GET /api/sysinfo` · `PUT /api/sync` · `PUT|DELETE /api/jobs/{id}` (`new` creates) ·
 `POST /api/jobs/{id}/run` · `POST /api/plan?lang=` · `GET /api/runs?job=&limit=` · `GET /api/runs/{id}` ·
 `POST /api/runs/{id}/cancel` · `GET /api/active` · `POST /api/storages/test` · `GET|DELETE /api/backups` ·
-`GET /api/download?storage=&dir=&file=&decrypt=1` · `POST /api/probe` · `POST /api/telegram/test`
+`GET /api/download?storage=&dir=&file=&decrypt=1` · `GET /api/downloadpart?storage=&dir=&file=&part=` ·
+`POST /api/probe` · `POST /api/telegram/test`
 
 ## Hosting script protocol (`internal/site`)
 

@@ -415,6 +415,7 @@ type Run struct {
 	JobID       string                `json:"jobId"`
 	JobName     string                `json:"jobName"`
 	Trigger     string                `json:"trigger"`
+	Retry       int                   `json:"retry,omitempty"`
 	Status      string                `json:"status"`
 	QueuedAt    time.Time             `json:"queuedAt"`
 	StartedAt   time.Time             `json:"startedAt"`

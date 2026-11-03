@@ -465,7 +465,48 @@ func (p *progressWriter) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func (a *App) downloadBackupFile(serverID, storageID, dir, file, dest string, decrypt bool, size int64) error {
+var downloadLogMu sync.Mutex
+
+func appendDownloadLog(path, message string) error {
+	downloadLogMu.Lock()
+	defer downloadLogMu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(f, "%s %s\n", time.Now().Format(time.RFC3339), message); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func (a *App) logDownload(format string, args ...any) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	_ = appendDownloadLog(filepath.Join(dir, "Backupper", "downloads.log"), fmt.Sprintf(format, args...))
+}
+
+func (a *App) downloadBackupFile(serverID, storageID, dir, file, dest string, decrypt bool, size int64) (retErr error) {
+	started := time.Now()
+	var pw *progressWriter
+	a.logDownload("Начало: server=%s storage=%s dir=%s file=%s destination=%s", serverID, storageID, dir, file, dest)
+	defer func() {
+		var done int64
+		if pw != nil {
+			done = pw.done
+		}
+		if retErr != nil {
+			a.logDownload("Ошибка: file=%s destination=%s bytes=%d duration=%s: %v", file, dest, done, time.Since(started).Round(time.Second), retErr)
+		} else {
+			a.logDownload("Готово: file=%s destination=%s bytes=%d duration=%s", file, dest, done, time.Since(started).Round(time.Second))
+		}
+	}()
 	q := url.Values{"storage": {storageID}, "dir": {dir}, "file": {file}}
 	if decrypt {
 		q.Set("decrypt", "1")
@@ -480,7 +521,7 @@ func (a *App) downloadBackupFile(serverID, storageID, dir, file, dest string, de
 	if err != nil {
 		return err
 	}
-	pw := &progressWriter{a: a, key: dir + "/" + file, total: size}
+	pw = &progressWriter{a: a, key: dir + "/" + file, total: size}
 	_, copyErr := io.Copy(io.MultiWriter(f, pw), resp.Body)
 	closeErr := f.Close()
 	if copyErr != nil {
@@ -528,7 +569,16 @@ func safeLocalName(name string) bool {
 	return name != "" && name != "." && name != ".." && path.Base(name) == name && filepath.Base(name) == name
 }
 
-func (a *App) SaveBackupLocal(serverID, runID, storageID string, decrypt bool) (string, error) {
+func (a *App) SaveBackupLocal(serverID, runID, storageID string, decrypt bool) (result string, retErr error) {
+	started := time.Now()
+	a.logDownload("Сохранение копии: server=%s run=%s storage=%s", serverID, runID, storageID)
+	defer func() {
+		if retErr != nil {
+			a.logDownload("Копия не сохранена: run=%s duration=%s: %v", runID, time.Since(started).Round(time.Second), retErr)
+		} else {
+			a.logDownload("Копия сохранена: run=%s destination=%s duration=%s", runID, result, time.Since(started).Round(time.Second))
+		}
+	}()
 	root := strings.TrimSpace(a.store.Get().Settings.DownloadDir)
 	if root == "" {
 		return "", errors.New("сначала укажите локальную папку в настройках")
@@ -577,7 +627,7 @@ func (a *App) SaveBackupLocal(serverID, runID, storageID string, decrypt bool) (
 		if decrypt && f.Encrypted {
 			name = strings.TrimSuffix(name, ".age")
 		}
-		if err := a.downloadBackupFile(serverID, storageID, run.RemoteDir, f.Name, filepath.Join(destDir, name), decrypt && f.Encrypted, f.Size); err != nil {
+		if err := a.downloadBackupFileParts(serverID, storageID, run.RemoteDir, f, filepath.Join(destDir, name), decrypt && f.Encrypted); err != nil {
 			return "", fmt.Errorf("%s: %w", f.Name, err)
 		}
 	}

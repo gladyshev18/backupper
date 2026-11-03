@@ -190,6 +190,7 @@ export interface Progress {
 
 export interface Run {
   id: string; jobId: string; jobName: string; trigger: string
+  retry?: number
   status: 'queued' | 'running' | 'success' | 'warning' | 'failed' | 'canceled'
   queuedAt: string; startedAt: string; finishedAt: string
   remoteDir: string; storages: string[]; files: RunFile[]

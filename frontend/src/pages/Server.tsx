@@ -270,7 +270,7 @@ export function HistoryTab({ id, jobs, fixed }: { id: string; jobs: JobView[]; f
               {runs.map(r => (
                 <tr key={r.id} className="click" onClick={() => show(r)}>
                   <td style={{ fontWeight: 550 }}>{r.jobName}</td>
-                  <td className="muted">{t(r.trigger)}</td>
+                  <td className="muted">{r.retry ? t('Автоповтор {n}', { n: r.retry }) : t(r.trigger)}</td>
                   <td className="muted">{dateTime(r.startedAt || r.queuedAt)}</td>
                   <td className="muted">{duration(r.startedAt, r.finishedAt)}</td>
                   <td className="muted">{bytes(r.rawBytes)} → {bytes(r.bytes)}</td>

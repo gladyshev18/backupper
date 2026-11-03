@@ -81,6 +81,7 @@ export const en: Record<string, string> = {
   'Завершение выгрузки': 'Finishing upload',
   'по расписанию': 'scheduled',
   'вручную': 'manual',
+  'Автоповтор {n}': 'Automatic retry {n}',
 
   // run progress
   'Ожидает в очереди': 'Waiting in queue',
